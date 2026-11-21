@@ -8,6 +8,20 @@ is iOS testing on cheap Linux VMs instead of rented Macs.
 
 > **Status: experimental.** Nothing here is ready to use yet.
 
+## Watch a phone in the browser
+
+On the Linux machine running an x86Sim phone:
+
+```sh
+cargo build --release
+./target/release/agent-sim serve --device a
+```
+
+It prints a URL with an access token. The page streams the phone's screen as H.264 over a WebSocket, decoded with
+WebCodecs (a recent Chrome, Edge or Safari), and sends touches, keys and the Home and Lock buttons back. Touches that
+start at a screen edge are system gestures, so swiping up from the bottom goes home. `--listen 0.0.0.0:8080` serves
+it beyond the machine; keep the token private.
+
 ## Planned
 
 - `agent-sim boot`, `install`, `launch`, `snapshot`, `tap`, `type`, `screenshot`

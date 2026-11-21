@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-sim</title>
+<style>
+  :root { color-scheme: dark; --bg: #0e0e10; --frame: #1d1d21; --edge: #2c2c31; --text: #9a9aa2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; background: var(--bg); color: var(--text);
+         font: 13px/1.4 system-ui, sans-serif; display: flex; flex-direction: column;
+         align-items: center; justify-content: center; gap: 12px; overflow: hidden; }
+  #phone { height: calc(100vh - 72px); aspect-ratio: 1206 / 2622; border-radius: 48px; padding: 10px;
+           background: var(--frame); box-shadow: 0 0 0 1px var(--edge), 0 20px 60px #000a; }
+  canvas { width: 100%; height: 100%; border-radius: 38px; display: block; background: #000;
+           touch-action: none; user-select: none; cursor: default; }
+  .bar { display: flex; gap: 8px; align-items: center; }
+  button { background: var(--frame); color: #ddd; border: 1px solid var(--edge); border-radius: 8px;
+           padding: 6px 12px; font: inherit; }
+  button:active { background: var(--edge); }
+  #stats { font-variant-numeric: tabular-nums; min-width: 260px; }
+  #note { position: fixed; top: 12px; }
+</style>
+</head>
+<body>
+<div id="note"></div>
+<div id="phone"><canvas id="screen" tabindex="0"></canvas></div>
+<div class="bar">
+  <button data-button="home">Home</button>
+  <button data-button="lock">Lock</button>
+  <span id="stats">connecting…</span>
+</div>
+<script>
+"use strict";
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+const stats = document.getElementById("stats");
+const note = document.getElementById("note");
+const base = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + base + "ws";
+
+if (!("VideoDecoder" in window)) note.textContent = "This browser has no WebCodecs: use a recent Chrome, Edge or Safari.";
+
+let ws, decoder = null, codec = null, waitingKey = true;
+let frames = 0, bytes = 0, lastLatency = 0, lastEncode = 0;
+
+// avc1.PPCCLL from the SPS (NAL type 7) of a keyframe
+function codecOf(data) {
+  for (let i = 0; i + 4 < data.length; i++) {
+    if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 1 && (data[i + 3] & 0x1f) === 7) {
+      const h = (b) => b.toString(16).padStart(2, "0");
+      return "avc1." + h(data[i + 4]) + h(data[i + 5]) + h(data[i + 6]);
+    }
+  }
+  return null;
+}
+
+function startDecoder(c) {
+  if (decoder && decoder.state !== "closed") decoder.close();
+  decoder = new VideoDecoder({
+    output: (f) => {
+      if (canvas.width !== f.displayWidth || canvas.height !== f.displayHeight) {
+        canvas.width = f.displayWidth; canvas.height = f.displayHeight;
+      }
+      ctx.drawImage(f, 0, 0);
+      f.close();
+      frames++;
+    },
+    error: (e) => { console.warn(e); decoder = null; askKeyframe(); },
+  });
+  decoder.configure({ codec: c, optimizeForLatency: true });
+  codec = c;
+}
+
+function askKeyframe() {
+  waitingKey = true;
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: "keyframe" }));
+}
+
+function connect() {
+  ws = new WebSocket(wsUrl);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => { note.textContent = ""; waitingKey = true; };
+  ws.onclose = () => { stats.textContent = "reconnecting…"; setTimeout(connect, 1000); };
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === "string") return;
+    const view = new DataView(ev.data);
+    const key = (view.getUint8(0) & 1) === 1;
+    const seq = view.getBigUint64(1, true);
+    const published = Number(view.getBigUint64(9, true) / 1000000n);
+    const sent = Number(view.getBigUint64(17, true) / 1000000n);
+    const data = new Uint8Array(ev.data, 25);
+    bytes += ev.data.byteLength;
+    if (waitingKey && !key) return;
+    if (key) {
+      const c = codecOf(data);
+      if (c && (!decoder || c !== codec)) startDecoder(c);
+      waitingKey = false;
+    }
+    if (!decoder || decoder.state !== "configured") return;
+    decoder.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp: Number(seq) * 1000, data }));
+    lastEncode = sent - published;
+    lastLatency = Date.now() - published;
+  };
+}
+connect();
+
+setInterval(() => {
+  if (ws.readyState !== 1) return;
+  stats.textContent = `${frames} fps · ${Math.round(bytes * 8 / 1000)} kbps · encode ${lastEncode} ms · ` +
+    `screen→here ≈${lastLatency} ms`;
+  frames = 0; bytes = 0;
+}, 1000);
+
+function send(msg) { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); }
+function pos(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+}
+let down = false, pending = null;
+canvas.addEventListener("pointerdown", (e) => {
+  down = true; canvas.setPointerCapture(e.pointerId); canvas.focus();
+  send({ t: "touch", p: "down", ...pos(e) });
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (!down) return;
+  // one move per animation frame: the latest position wins
+  if (!pending) requestAnimationFrame(() => { send({ t: "touch", p: "move", ...pending }); pending = null; });
+  pending = pos(e);
+});
+const release = (e) => {
+  if (!down) return;
+  down = false;
+  if (pending) { send({ t: "touch", p: "move", ...pending }); pending = null; }
+  send({ t: "touch", p: "up", ...pos(e) });
+};
+canvas.addEventListener("pointerup", release);
+canvas.addEventListener("pointercancel", release);
+
+for (const b of document.querySelectorAll("[data-button]")) {
+  b.addEventListener("pointerdown", () => send({ t: "button", b: b.dataset.button, d: true }));
+  b.addEventListener("pointerup", () => send({ t: "button", b: b.dataset.button, d: false }));
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const s = e.key.length === 1 ? e.key : e.key === "Enter" ? "\n" : e.key === "Backspace" ? "\b" :
+    e.key === "Tab" ? "\t" : "";
+  if (!s) return;
+  e.preventDefault();
+  send({ t: "text", s });
+});
+</script>
+</body>
+</html>
