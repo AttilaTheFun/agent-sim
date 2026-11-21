@@ -15,6 +15,8 @@ is iOS testing on cheap Linux VMs instead of rented Macs.
 - Running device builds (`.ipa`) in the simulator where possible
 - Several simulators per VM, and a remote mode for cloud VMs
 
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the plan to 1.0.
+
 ## Credits
 
 agent-sim builds on [x86Sim](https://github.com/x86sim/x86sim), which runs Apple's simulator runtimes on Linux
