@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# Turn a fresh Ubuntu 24.04 x86-64 machine into one that runs an iOS phone with x86Sim, set up the way agent-sim
+# measured fastest. Re-runnable: each step skips what is already done.
+#
+#   scripts/setup-vm.sh
+#
+# Environment:
+#   X86SIM_VERSION   x86Sim release (default 0.5.2)
+#   RUNTIME_BUILD    iOS runtime build from Apple's catalogue (default 24B8117, iOS 27.2)
+#   DEVICE, MODEL    the phone to create (default p, "iPhone 17 Pro (at 2x)")
+#
+# Apple's iOS runtime is downloaded from Apple onto this machine (about 8 GB) and never leaves it.
+set -Eeuo pipefail
+
+X86SIM_VERSION=${X86SIM_VERSION:-0.5.2}
+RUNTIME_BUILD=${RUNTIME_BUILD:-24B8117}
+DEVICE=${DEVICE:-p}
+MODEL=${MODEL:-"iPhone 17 Pro (at 2x)"}
+ROOT=${AGENT_SIM_HOME:-$HOME/.local/share/agent-sim}
+X=$ROOT/x86sim-$X86SIM_VERSION/AppRun
+DATA=${XDG_DATA_HOME:-$HOME/.local/share}/x86sim
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+log() { printf '\n==> %s\n' "$*"; }
+die() { printf 'setup-vm.sh: %s\n' "$*" >&2; exit 1; }
+
+log "Checking the machine"
+[ "$(uname -m)" = x86_64 ] || die "x86Sim needs an x86-64 machine"
+glibc=$(ldd --version | head -1 | grep -oE '[0-9]+\.[0-9]+$')
+awk "BEGIN{exit !($glibc >= 2.39)}" || die "x86Sim needs glibc 2.39 or newer (Ubuntu 24.04+), found $glibc"
+free_gb=$(df -BG --output=avail "$HOME" | tail -1 | tr -dc 0-9)
+[ "$free_gb" -ge 45 ] || [ -d "$DATA/runtimes" ] || die "need 45 GB free in $HOME for the runtime, have ${free_gb} GB"
+[ "$(nproc)" -ge 4 ] || echo "warning: fewer than 4 CPUs; the phone will be slow"
+
+log "Installing packages"
+sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -yqq \
+	python3 python3-pil python3-dnspython curl openssl jq mesa-vulkan-drivers >/dev/null
+
+log "Keeping a user session for x86Sim's sockets and services"
+# x86Sim puts sockets under /run/user/<uid> and runs phones as user services; without a login session (a server
+# reached over SSH or an API) neither exists unless the user lingers.
+sudo loginctl enable-linger "$USER"
+for _ in $(seq 20); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 0.5; done
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
+
+if [ ! -x "$X" ]; then
+	log "Downloading x86Sim $X86SIM_VERSION"
+	tmp=$(mktemp -d)
+	progress=-sS
+	[ -t 1 ] && progress=--progress-bar
+	curl -fL "$progress" -o "$tmp/x86sim.AppImage" \
+		"https://github.com/x86sim/x86sim/releases/download/v$X86SIM_VERSION/x86sim-$X86SIM_VERSION-x86_64.AppImage"
+	chmod +x "$tmp/x86sim.AppImage"
+	# unpacked once, so it runs without FUSE
+	(cd "$tmp" && ./x86sim.AppImage --appimage-extract >/dev/null)
+	mkdir -p "$ROOT"
+	rm -rf "$ROOT/x86sim-$X86SIM_VERSION"
+	mv "$tmp/squashfs-root" "$ROOT/x86sim-$X86SIM_VERSION"
+	rm -rf "$tmp"
+fi
+"$X" version
+
+fetched=$DATA/runtimes/.agent-sim-fetched-$RUNTIME_BUILD
+if [ ! -e "$fetched" ]; then
+	log "Downloading the iOS runtime $RUNTIME_BUILD from Apple (about 8 GB)"
+	# Apple's CDN drops long downloads now and then; the fetch resumes where it stopped
+	for attempt in 1 2 3 4 5; do
+		if "$X" shell -c "python3 cli/libexec/arm64/runtime-fetch.py fetch $RUNTIME_BUILD"; then
+			touch "$fetched"
+			break
+		fi
+		[ "$attempt" = 5 ] && die "the runtime download failed 5 times"
+		echo "download interrupted; resuming (attempt $((attempt + 1)) of 5)"
+		sleep 5
+	done
+fi
+
+log "Adding iPhone 17 Pro (at 2x): the iPhone 17 Pro's layout at 44% of the pixels"
+types=$(ls "$DATA"/app/"$X86SIM_VERSION"*/cli/lib/devicetypes-a64.json | head -1)
+python3 - "$types" <<'PY'
+import json, sys
+path = sys.argv[1]
+types = json.load(open(path))
+if "iPhone 17 Pro (at 2x)" not in types:
+    t = dict(types["iPhone 17 Pro"])
+    # the same 402x874 points: 2x instead of 3x, and the pitch with it
+    t.update(w="804", h="1748", scale="2.000000", pitch="306.666667")
+    types["iPhone 17 Pro (at 2x)"] = t
+    json.dump(types, open(path, "w"), indent=1)
+PY
+
+if [ ! -d "$DATA/var/device-a64-$DEVICE" ]; then
+	log "Creating the phone $DEVICE ($MODEL)"
+	"$X" x86sim device create --model "$MODEL" "$DEVICE"
+fi
+
+aot_status() {
+	local s
+	s=$("$X" aot --device "$DATA/var/device-a64-$DEVICE" status 2>/dev/null) || true
+	grep -m1 '^image ' <<<"$s" || true
+}
+trained=$DATA/var/device-a64-$DEVICE/.agent-sim-trained
+if [[ $(aot_status) != *"(current)"* ]]; then
+	if [ ! -e "$trained" ]; then
+		log "First boot, to learn what the phone runs (a new phone sets itself up: a few minutes)"
+		"$HERE/phone.sh" start "$DEVICE"
+		TIMEOUT=1800 "$HERE/phone.sh" wait "$DEVICE"
+		sleep 120
+		"$HERE/phone.sh" stop "$DEVICE"
+		touch "$trained"
+	fi
+	log "Pre-translating the runtime's code, so apps do not translate it as they run"
+	# the first pass can make more code worth translating: repeat until the image is current
+	for _ in 1 2 3; do
+		"$X" aot --device "$DATA/var/device-a64-$DEVICE" update
+		[[ $(aot_status) == *"(current)"* ]] && break
+	done
+	aot_status
+fi
+
+log "Done. Start the phone with:  scripts/phone.sh start $DEVICE && scripts/phone.sh wait $DEVICE"
