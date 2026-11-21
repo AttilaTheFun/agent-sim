@@ -8,13 +8,26 @@ is iOS testing on cheap Linux VMs instead of rented Macs.
 
 > **Status: experimental.** Nothing here is ready to use yet.
 
+## Set up a machine
+
+On a fresh Ubuntu 24.04 x86-64 machine (8+ CPUs, 16 GB, 60 GB free disk; no GPU needed):
+
+```sh
+scripts/setup-vm.sh
+scripts/phone.sh start && scripts/phone.sh wait
+```
+
+The setup downloads x86Sim and Apple's iOS 27.2 runtime (about 8 GB, from Apple), creates an iPhone 17 Pro drawn at
+2x, and pre-translates the runtime. It takes about half an hour once; after that a phone boots in about 40 seconds.
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md) has the measurements behind these choices.
+
 ## Watch a phone in the browser
 
-On the Linux machine running an x86Sim phone:
+On the same machine, with the phone running:
 
 ```sh
 cargo build --release
-./target/release/agent-sim serve --device a
+./target/release/agent-sim serve --device p
 ```
 
 It prints a URL with an access token. The page streams the phone's screen as H.264 over a WebSocket, decoded with
