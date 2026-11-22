@@ -1,6 +1,10 @@
+mod ax;
+mod cmd;
 mod device;
 mod encode_bench;
 mod input;
+mod ipa;
+mod phone;
 mod ring;
 mod serve;
 mod video;
@@ -9,22 +13,99 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::io::Read;
 use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::time::Duration;
 
 /// iOS simulators for AI agents, on Linux.
+///
+/// A typical loop: `agent-sim up`, `agent-sim install MyApp.ipa`, `agent-sim launch com.me.app`, then
+/// `agent-sim snapshot` to read the screen and `agent-sim tap @e3` / `type` / `scroll` to act on it.
 #[derive(Parser)]
-#[command(name = "agent-sim", version, about)]
+#[command(name = "agent-sim", version, about, long_about)]
 struct Cli {
+    /// The phone: its name (setup-vm.sh makes `p`; pool.sh `pool1`...), or $AGENT_SIM_DEVICE.
+    #[arg(long, short = 'd', global = true)]
+    device: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Boot the phone and wait for its home screen.
+    Up,
+    /// Shut the phone down.
+    Down,
+    /// List the phones on this machine and whether they run.
+    Status,
+    /// Read the screen: one line per element, with references (@e3) that tap accepts.
+    Snapshot {
+        /// Everything as JSON (frames, ids, hints, states).
+        #[arg(long)]
+        json: bool,
+    },
+    /// Save the screen as a PNG.
+    Screenshot {
+        /// Output file.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+    /// Tap an element (@e3 from the last snapshot), a point (x y, in screen points), or the first element whose
+    /// text matches.
+    Tap {
+        #[arg(required = true, num_args = 1.., allow_hyphen_values = true)]
+        target: Vec<String>,
+        /// Hold for this long (a long press).
+        #[arg(long, default_value_t = 80)]
+        hold_ms: u64,
+    },
+    /// Type text into the focused field (\n is Return).
+    Type { text: String },
+    /// Scroll the content: down shows what is below.
+    Scroll {
+        #[arg(value_parser = ["up", "down", "left", "right"])]
+        direction: String,
+        /// How far, in screen heights times 0.35 (1 by default).
+        #[arg(long, default_value_t = 1.0)]
+        amount: f64,
+    },
+    /// Drag from one point to another (screen points).
+    Swipe {
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+        #[arg(long, default_value_t = 300)]
+        ms: u64,
+    },
+    /// Press a button: home, lock, volup, voldown, siri, action...
+    Press { button: String },
+    /// Install an app: an .ipa (device builds are converted for the simulator) or a simulator .app.
+    Install { path: PathBuf },
+    /// Remove an installed app.
+    Uninstall { bundle_id: String },
+    /// Start an app.
+    Launch { bundle_id: String },
+    /// Stop an app.
+    Terminate { bundle_id: String },
+    /// List installed apps (yours; --all for the system's too).
+    Apps {
+        #[arg(long)]
+        all: bool,
+    },
+    /// Open a URL (web pages in Safari, or an app's deep link).
+    Open { url: String },
+    /// Wait until text is on screen (or, with --gone, no longer is).
+    Wait {
+        text: String,
+        /// Seconds.
+        #[arg(long, default_value_t = 20.0)]
+        timeout: f64,
+        #[arg(long)]
+        gone: bool,
+    },
     /// Stream a running phone to a browser and take input back.
     Serve {
-        /// The x86Sim device: its name (`a` for device-a64-a) or its directory. Empty for x86Sim's default.
-        #[arg(long, default_value = "")]
-        device: String,
         /// Address to listen on.
         #[arg(long, default_value = "127.0.0.1:7979")]
         listen: SocketAddr,
@@ -64,8 +145,42 @@ fn random_token() -> Result<String> {
 }
 
 fn main() -> Result<()> {
+    // piped into `head` and the like: stop quietly when the reader goes away, as command-line tools do
+    // SAFETY: setting a signal's disposition to its default before any other thread exists
+    #[allow(unsafe_code)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let cli = Cli::parse();
+    let name = phone::pick_device(cli.device.as_deref());
+    let dev = || device::Device::find(&name);
     match cli.command {
+        Command::Up => cmd::up(&name),
+        Command::Down => cmd::down(&name),
+        Command::Status => cmd::status(),
+        Command::Snapshot { json } => cmd::snapshot(&dev()?, json),
+        Command::Screenshot { out } => cmd::screenshot(&dev()?, out),
+        Command::Tap { target, hold_ms } => cmd::tap(&dev()?, &target, hold_ms),
+        Command::Type { text } => cmd::type_text(&dev()?, &text.replace("\\n", "\n")),
+        Command::Scroll { direction, amount } => cmd::scroll(&dev()?, &direction, amount),
+        Command::Swipe { x1, y1, x2, y2, ms } => cmd::swipe(&dev()?, (x1, y1), (x2, y2), ms),
+        Command::Press { button } => cmd::press(&dev()?, &button),
+        Command::Install { path } => cmd::install(&dev()?, &path),
+        Command::Uninstall { bundle_id } => cmd::uninstall(&dev()?, &bundle_id),
+        Command::Launch { bundle_id } => cmd::launch(&dev()?, &bundle_id),
+        Command::Terminate { bundle_id } => cmd::terminate(&dev()?, &bundle_id),
+        Command::Apps { all } => cmd::apps(&dev()?, all),
+        Command::Open { url } => cmd::open_url(&dev()?, &url),
+        Command::Wait {
+            text,
+            timeout,
+            gone,
+        } => cmd::wait(
+            &dev()?,
+            &text,
+            Duration::from_secs_f64(timeout.max(0.0)),
+            gone,
+        ),
         Command::EncodeBench {
             width,
             height,
@@ -80,7 +195,6 @@ fn main() -> Result<()> {
             bitrate.saturating_mul(1000),
         ),
         Command::Serve {
-            device,
             listen,
             token,
             scale,
@@ -92,7 +206,7 @@ fn main() -> Result<()> {
                 None => random_token()?,
             };
             let opts = serve::Options {
-                device: device::Device::find(&device)?,
+                device: dev()?,
                 listen,
                 token,
                 scale: scale as usize,

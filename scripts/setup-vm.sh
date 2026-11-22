@@ -110,11 +110,13 @@ aot_status() {
 }
 DIR=$DATA/var/device-a64-$DEVICE
 trained=$DIR/.agent-sim-trained
-calm=$DIR/.agent-sim-reduced-effects
+calm=$DIR/.agent-sim-settings-2
 RUNTIME_ROOT=$(ls -d "$DATA"/runtimes/*-"$RUNTIME_BUILD"-arm64/extracted/Library/Developer/CoreSimulator/Profiles/Runtimes/*.simruntime/Contents/Resources/RuntimeRoot | head -1)
-# Reduce Transparency and Reduce Motion: blurs and long animations are the costliest things to draw on a CPU
+# Reduce Transparency and Reduce Motion: blurs and long animations are the costliest things to draw on a CPU. And
+# app accessibility, as Accessibility Inspector turns it on in Apple's simulator: UIKit then describes every control,
+# which `agent-sim snapshot` reads.
 reduce_effects() {
-	for key in ReduceMotionEnabled EnhancedBackgroundContrastEnabled; do
+	for key in ReduceMotionEnabled EnhancedBackgroundContrastEnabled ApplicationAccessibilityEnabled AccessibilityEnabled; do
 		(cd "$DATA" && X86SIM_DEVICE=$DIR "$X" x86sim spawn "$RUNTIME_ROOT/usr/bin/defaults" \
 			write com.apple.Accessibility "$key" -bool true >/dev/null)
 	done

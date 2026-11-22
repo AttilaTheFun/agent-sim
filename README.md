@@ -6,7 +6,7 @@ agent-sim runs Apple's iOS simulator runtime on x86-64 Linux and gives coding ag
 it: boot a device, install an app, read the screen as an accessibility tree, tap, type and take screenshots. The goal
 is iOS testing on cheap Linux VMs instead of rented Macs.
 
-> **Status: experimental.** Nothing here is ready to use yet.
+> **Status: early.** It works end to end on one VM; expect rough edges.
 
 ## Set up a machine
 
@@ -48,14 +48,38 @@ WebCodecs (a recent Chrome, Edge or Safari), and sends touches, keys and the Hom
 start at a screen edge are system gestures, so swiping up from the bottom goes home. `--listen 0.0.0.0:8080` serves
 it beyond the machine; keep the token private.
 
-## Planned
+## Drive it from an agent
 
-- `agent-sim boot`, `install`, `launch`, `snapshot`, `tap`, `type`, `screenshot`
-- Accessibility snapshots with element references, so agents act without screenshots
-- Running device builds (`.ipa`) in the simulator where possible
-- Several simulators per VM, and a remote mode for cloud VMs
+```sh
+agent-sim up                       # boot the phone, wait for its home screen
+agent-sim install MyApp.ipa        # a device build is converted for the simulator; a simulator .app works too
+agent-sim launch com.example.myapp
+agent-sim snapshot                 # the screen as text, one element per line
+agent-sim tap @e4                  # or: agent-sim tap "Sign in"   or: agent-sim tap 201 320
+agent-sim type "hello@example.com"
+agent-sim scroll down
+agent-sim wait "Welcome" --timeout 20
+agent-sim screenshot -o screen.png
+```
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for the plan to 1.0.
+`snapshot` reads the accessibility tree of the app in front and of SpringBoard (system alerts, the home screen,
+the status bar), so an agent works from text instead of pixels:
+
+```
+app com.apple.Preferences
+@e1 button "Apple Account, Sign in to access your iCloud data, the App Store, Apple services, and more." (201,213)
+@e2 button "General" id="com.apple.settings.general" (201,320)
+@e3 button "Accessibility" id="com.apple.settings.accessibility" (201,372)
+...
+```
+
+Every command takes `--device NAME` (or `AGENT_SIM_DEVICE`); `agent-sim --help` lists them all (`press`, `swipe`,
+`open`, `apps`, `terminate`, `uninstall`, `status`, `down`, `serve`). `snapshot --json` gives frames, ids and states.
+
+Device builds run when they are not encrypted: App Store downloads are (FairPlay), so use an Ad Hoc, Development or
+Enterprise export, or build for the simulator.
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for what comes next.
 
 ## Credits
 

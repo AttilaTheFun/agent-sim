@@ -80,23 +80,26 @@ lean) DEFAULT_EXTRA_JOBS=$LEAN_JOBS ;;
 *) DEFAULT_EXTRA_JOBS="$LEAN_JOBS $APPS_JOBS" ;;
 esac
 DEFAULT_EXTRA_JOBS=$(echo $DEFAULT_EXTRA_JOBS)
-# agent-sim's own hooks (hooks/, built for the simulator) go into SpringBoard on top of the libraries x86Sim inserts
-# into every process: they dismiss a permission prompt whose app has quit (docs/KNOWN_ISSUES.md).
+# agent-sim's own hooks (hooks/, built for the simulator), on top of the libraries x86Sim inserts into every process:
+# the accessibility reader in every process (inert until UIKit is loaded and `agent-sim snapshot` asks), and in
+# SpringBoard also the one that dismisses a permission prompt whose app has quit (docs/KNOWN_ISSUES.md).
 HOOKS=$(cd "$(dirname "${BASH_SOURCE[0]}")/../hooks/prebuilt" 2>/dev/null && pwd || true)
 ensure_penv() {
 	mkdir -p "$(dirname "$PENV")"
 	touch "$PENV"
 	grep -qs '^com.apple.WebKit.WebContent .*GIGACAGE_ENABLED=0' "$PENV" ||
 		echo "com.apple.WebKit.WebContent GIGACAGE_ENABLED=0" >>"$PENV"
-	local keep line base
-	keep=$(grep -v '^SpringBoard .*libagentsim-' "$PENV" || true)
+	local keep base h log=""
+	keep=$(grep -v 'libagentsim-' "$PENV" || true)
 	printf '%s\n' "$keep" | sed '/^$/d' >"$PENV"
-	[ "${AGENT_SIM_HOOKS:-1}" = 1 ] && [ -f "$HOOKS/libagentsim-springboard.dylib" ] || return 0
+	[ "${AGENT_SIM_HOOKS:-1}" = 1 ] && [ -f "$HOOKS/libagentsim-ax.dylib" ] || return 0
 	case $HOOKS in *[[:space:]]*) echo "phone.sh: hooks skipped: their path has a space ($HOOKS)" >&2; return 0 ;; esac
 	base=$(sed -n 's/^DYLD_INSERT_LIBRARIES=//p' "$DIR/sim.env")
-	line="SpringBoard DYLD_INSERT_LIBRARIES=${base:+$base:}/Volumes/SystemRoot$HOOKS/libagentsim-springboard.dylib"
-	[ -n "${AGENT_SIM_HOOK_LOG:-}" ] && line+=" AGENT_SIM_HOOK_LOG=$AGENT_SIM_HOOK_LOG"
-	echo "$line" >>"$PENV"
+	h=/Volumes/SystemRoot$HOOKS
+	[ -n "${AGENT_SIM_HOOK_LOG:-}" ] && log=" AGENT_SIM_HOOK_LOG=$AGENT_SIM_HOOK_LOG"
+	# a later line wins for a program it names: SpringBoard's comes after the one for every program
+	echo "* DYLD_INSERT_LIBRARIES=${base:+$base:}$h/libagentsim-ax.dylib" >>"$PENV"
+	echo "SpringBoard DYLD_INSERT_LIBRARIES=${base:+$base:}$h/libagentsim-ax.dylib:$h/libagentsim-springboard.dylib$log" >>"$PENV"
 }
 
 case $ACTION in

@@ -8,7 +8,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 [ "$(uname -s)" = Darwin ] || { echo "hooks/build.sh: needs macOS (clang with the macOS SDK)" >&2; exit 1; }
 SDK=${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}
 mkdir -p prebuilt
-for src in springboard.c; do
+for src in springboard.c ax.c; do
 	out=prebuilt/libagentsim-${src%.c}.dylib
 	clang -arch arm64 -isysroot "$SDK" -mmacosx-version-min=14.0 -O2 -Wall \
 		-dynamiclib -install_name "@rpath/${out##*/}" -lobjc -o "$out" "$src"
