@@ -128,19 +128,27 @@ impl Hid {
         ))
     }
 
+    /// Types `s` key by key. Keys pressed back to back were dropped (a web field kept one character of
+    /// seventeen, a search field five of nine): each key is held and followed by a pause, as a fast typist's are.
     pub fn text(&mut self, s: &str) -> Result<()> {
+        const HOLD: Duration = Duration::from_millis(15);
+        const GAP: Duration = Duration::from_millis(35);
         for c in s.chars() {
             let Some((usage, shift)) = key_usage(c) else {
                 continue;
             };
             if shift {
                 self.send("key down 225")?;
+                std::thread::sleep(HOLD);
             }
             self.send(&format!("key down {usage}"))?;
+            std::thread::sleep(HOLD);
             self.send(&format!("key up {usage}"))?;
             if shift {
+                std::thread::sleep(HOLD);
                 self.send("key up 225")?;
             }
+            std::thread::sleep(GAP);
         }
         Ok(())
     }

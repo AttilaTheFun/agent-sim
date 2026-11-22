@@ -54,14 +54,17 @@ pub struct Snapshot {
 struct RawDump {
     process: String,
     windows: Vec<RawWindow>,
+    /// the app's web views on screen: x, y, width, height (screen points)
+    #[serde(default)]
+    webviews: Vec<[f64; 4]>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct RawWindow {
     class: String,
     level: f64,
     elements: Vec<RawElement>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct RawElement {
     label: Option<String>,
     value: Option<String>,
@@ -80,8 +83,6 @@ fn role(traits: &[String]) -> &'static str {
     let has = |t: &str| traits.iter().any(|x| x == t);
     if has("text-field") || has("search-field") {
         "textfield"
-    } else if has("toggle") {
-        "switch"
     } else if has("keyboard-key") {
         "key"
     } else if has("link") {
@@ -90,8 +91,6 @@ fn role(traits: &[String]) -> &'static str {
         "button"
     } else if has("adjustable") {
         "adjustable"
-    } else if has("tab-bar") {
-        "tabbar"
     } else if has("header") {
         "heading"
     } else if has("image") {
@@ -128,6 +127,107 @@ fn dump(dir: &Path, linux_pid: u32, name: &str, timeout: Duration) -> Result<Raw
     serde_json::from_str(&text).with_context(|| format!("reading {}", file.display()))
 }
 
+/// The elements of the web pages shown in `webviews` (x, y, w, h), in screen points (WebKit reports them so).
+fn web_windows(dev: &Device, dir: &Path, webviews: &[[f64; 4]]) -> Vec<RawWindow> {
+    let Ok(procs) = phone::process_ids(dev, |_, exe| exe == "com.apple.WebKit.WebContent") else {
+        return Vec::new();
+    };
+    // a page still loading or zooming moves under the reading: read again until two readings agree
+    let (mut last, mut live) = read_web(dir, &procs, webviews, Duration::from_secs(4));
+    for _ in 0..3 {
+        if live.is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+        let (next, still) = read_web(dir, &live, webviews, Duration::from_secs(3));
+        let frames = |v: &[RawWindow]| -> Vec<[i64; 4]> {
+            v.iter()
+                .flat_map(|w| w.elements.iter())
+                .map(|e| e.frame.map(|f| f.round() as i64))
+                .collect()
+        };
+        let same = frames(&next) == frames(&last);
+        if !next.is_empty() {
+            last = next;
+        }
+        live = still;
+        if same {
+            break;
+        }
+    }
+    last
+}
+
+/// One reading: signals each WebContent process and takes the answers that come within `budget`. Returns the
+/// windows and the processes that have pages (worth asking again).
+fn read_web(
+    dir: &Path,
+    procs: &[(u32, u32)],
+    webviews: &[[f64; 4]],
+    budget: Duration,
+) -> (Vec<RawWindow>, Vec<(u32, u32)>) {
+    let file = |inner: u32| dir.join(format!("ax-{inner}.json"));
+    let stamp = |inner: u32| {
+        std::fs::metadata(file(inner))
+            .and_then(|m| m.modified())
+            .ok()
+    };
+    // an answer is new when its file changed after the signal; an in-flight one is never deleted
+    let before: Vec<_> = procs.iter().map(|&(_, i)| stamp(i)).collect();
+    for &(linux, inner) in procs {
+        // the hook's watcher thread picks this up within 150 ms; the signal is the fast path when it gets through
+        let _ = std::fs::write(dir.join(format!("req-{inner}")), b"");
+        let _ = phone::signal(linux, libc::SIGUSR2);
+    }
+    let mut pending: Vec<usize> = (0..procs.len()).collect();
+    let mut out = Vec::new();
+    let mut live = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let start = Instant::now();
+    while !pending.is_empty() && start.elapsed() < budget {
+        pending.retain(|&k| {
+            let (_, inner) = procs[k];
+            let now = stamp(inner);
+            if now.is_none() || now == before[k] {
+                return true;
+            }
+            let Ok(d) = std::fs::read_to_string(file(inner))
+                .map_err(anyhow::Error::from)
+                .and_then(|t| Ok(serde_json::from_str::<RawDump>(&t)?))
+            else {
+                return true; // written but not complete yet
+            };
+            if d.windows.iter().any(|w| !w.elements.is_empty()) {
+                live.push(procs[k]);
+            }
+            for w in d.windows {
+                let mut elements = Vec::new();
+                for e in w.elements {
+                    let (cx, cy) = (e.frame[0] + e.frame[2] / 2.0, e.frame[1] + e.frame[3] / 2.0);
+                    let inside = webviews.iter().any(|v| {
+                        cx >= v[0] && cx <= v[0] + v[2] && cy >= v[1] && cy <= v[1] + v[3]
+                    });
+                    let key = format!(
+                        "{:?}{:?}{:.0}{:.0}",
+                        e.label, e.value, e.frame[0], e.frame[1]
+                    );
+                    if inside && seen.insert(key) {
+                        elements.push(e);
+                    }
+                }
+                out.push(RawWindow {
+                    class: "WebPage".into(),
+                    level: 0.0,
+                    elements,
+                });
+            }
+            false
+        });
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    (out, live)
+}
+
 pub fn snapshot(dev: &Device) -> Result<Snapshot> {
     let dir = phone::data_dir(dev).join("tmp/agent-sim");
     std::fs::create_dir_all(&dir)?;
@@ -157,7 +257,14 @@ pub fn snapshot(dev: &Device) -> Result<Snapshot> {
         _ => None,
     };
 
-    // reading order: system alerts over everything, the app, the home screen when no app is in front, the status bar
+    // web views: their content is in WebKit's WebContent processes, in points from the web view's content origin
+    let web = match &app {
+        Some(a) if !a.webviews.is_empty() => web_windows(dev, &dir, &a.webviews),
+        _ => Vec::new(),
+    };
+
+    // reading order: system alerts over everything, web content, the app, the home screen when no app is in front,
+    // the status bar
     let mut parts: Vec<(&str, &RawWindow)> = Vec::new();
     let sb_windows = |pred: &dyn Fn(&RawWindow) -> bool| -> Vec<(&str, &RawWindow)> {
         let mut v: Vec<_> = springboard
@@ -172,6 +279,7 @@ pub fn snapshot(dev: &Device) -> Result<Snapshot> {
     parts.extend(sb_windows(&|w| {
         w.level > 1000.0 && !w.class.contains("StatusBar")
     }));
+    parts.extend(web.iter().map(|w| ("WebContent", w)));
     if let Some(a) = &app {
         let mut v: Vec<_> = a.windows.iter().map(|w| (a.process.as_str(), w)).collect();
         v.sort_by(|x, y| y.1.level.total_cmp(&x.1.level));
@@ -295,8 +403,8 @@ pub fn resolve(dev: &Device, r: &str) -> Result<Element> {
         .with_context(|| format!("no element {r} in the last snapshot"))
 }
 
-/// The element `text` names: the first whose label, value or id equals it (ignoring case), else the first that
-/// contains it.
+/// The element `text` names: one whose label, value or id equals it (ignoring case), else one that contains it.
+/// Among equally good matches, something to act on (a button, link or field) wins over text and headings.
 pub fn find<'a>(s: &'a Snapshot, text: &str) -> Option<&'a Element> {
     let t = text.to_lowercase();
     let fields = |e: &'a Element| {
@@ -305,14 +413,29 @@ pub fn find<'a>(s: &'a Snapshot, text: &str) -> Option<&'a Element> {
             .flatten()
             .map(|v| v.to_lowercase())
     };
-    s.elements
+    let actionable = |e: &&&'a Element| {
+        matches!(
+            e.role.as_str(),
+            "button" | "link" | "textfield" | "key" | "adjustable" | "app"
+        )
+    };
+    let exact: Vec<&Element> = s
+        .elements
         .iter()
-        .find(|e| fields(e).any(|v| v == t))
-        .or_else(|| {
-            s.elements
-                .iter()
-                .find(|e| fields(e).any(|v| v.contains(&t)))
-        })
+        .filter(|e| fields(e).any(|v| v == t))
+        .collect();
+    let partial: Vec<&Element> = s
+        .elements
+        .iter()
+        .filter(|e| fields(e).any(|v| v.contains(&t)))
+        .collect();
+    exact
+        .iter()
+        .find(actionable)
+        .or(exact.first())
+        .or_else(|| partial.iter().find(actionable))
+        .or(partial.first())
+        .copied()
 }
 
 #[cfg(test)]
@@ -326,5 +449,31 @@ mod tests {
         assert_eq!(role(&t(&["search-field", "text-field"])), "textfield");
         assert_eq!(role(&t(&["static-text"])), "text");
         assert_eq!(role(&t(&[])), "element");
+    }
+
+    #[test]
+    fn text_taps_prefer_controls() {
+        let el = |r: &str, role: &str, label: &str| Element {
+            reference: r.into(),
+            role: role.into(),
+            label: Some(label.into()),
+            value: None,
+            hint: None,
+            id: None,
+            states: vec![],
+            frame: [0.0; 4],
+            owner: "x".into(),
+        };
+        let s = Snapshot {
+            app: None,
+            app_not_answering: false,
+            elements: vec![
+                el("e1", "heading", "Sign in"),
+                el("e2", "button", "Sign in"),
+                el("e3", "text", "Sign in to continue"),
+            ],
+        };
+        assert_eq!(find(&s, "sign in").unwrap().reference, "e2");
+        assert_eq!(find(&s, "continue").unwrap().reference, "e3");
     }
 }

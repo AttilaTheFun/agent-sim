@@ -131,15 +131,16 @@ pub fn snapshot(dev: &Device, json: bool) -> Result<String> {
 }
 
 /// Where a tap target is: `@e3`, `x y` in screen points, or text an element's label, value or id contains.
-fn point(dev: &Device, target: &[String]) -> Result<(f64, f64, String)> {
+/// Like point, with the element's role (empty for a bare point).
+fn point_role(dev: &Device, target: &[String]) -> Result<(f64, f64, String, String)> {
     match target {
         [x, y] if x.parse::<f64>().is_ok() && y.parse::<f64>().is_ok() => {
-            Ok((x.parse()?, y.parse()?, format!("({x},{y})")))
+            Ok((x.parse()?, y.parse()?, format!("({x},{y})"), String::new()))
         }
         [r] if r.starts_with('@') => {
             let e = ax::resolve(dev, r)?;
             let (x, y) = e.center();
-            Ok((x, y, describe(&e)))
+            Ok((x, y, describe(&e), e.role.clone()))
         }
         [] => bail!("tap what? an element (@e3), a point (x y) or text"),
         words => {
@@ -150,7 +151,7 @@ fn point(dev: &Device, target: &[String]) -> Result<(f64, f64, String)> {
                 let s = ax::snapshot(dev)?;
                 if let Some(e) = ax::find(&s, &text) {
                     let (x, y) = e.center();
-                    return Ok((x, y, describe(e)));
+                    return Ok((x, y, describe(e), e.role.clone()));
                 }
                 if start.elapsed() > Duration::from_secs(3) {
                     bail!("nothing on screen matches \"{text}\"");
@@ -173,13 +174,17 @@ fn hid(dev: &Device) -> Hid {
 }
 
 pub fn tap(dev: &Device, target: &[String], hold_ms: u64) -> Result<String> {
-    let (x, y, what) = point(dev, target)?;
+    let (x, y, what, role) = point_role(dev, target)?;
     let scr = Screen::of(dev)?;
     let (u, v) = scr.unit(x, y);
     let mut h = hid(dev);
     h.touch("down", u, v)?;
     std::thread::sleep(Duration::from_millis(hold_ms.max(80)));
     h.touch("up", u, v)?;
+    if role == "textfield" {
+        // focus reaches a field (a web field above all) a moment after the tap; typing before it lands elsewhere
+        std::thread::sleep(Duration::from_millis(1200));
+    }
     Ok(format!("tapped {what}"))
 }
 
@@ -220,14 +225,53 @@ pub fn scroll(dev: &Device, dir: &str, amount: f64) -> Result<String> {
     Ok(format!("scrolled {dir}"))
 }
 
-pub fn type_text(dev: &Device, text: &str) -> Result<String> {
+/// Types into the field that has focus. The app inserts the text as the software keyboard does, which every field
+/// takes (web fields lost most hardware key events); with no field in focus, or `keys`, it goes as key presses.
+pub fn type_text(dev: &Device, text: &str, keys: bool) -> Result<String> {
+    if !keys && insert_text(dev, text)? {
+        return Ok(format!("typed {} characters", text.chars().count()));
+    }
     if text.chars().all(|c| crate::input::key_usage(c).is_some()) {
         hid(dev).text(text)?;
     } else {
         // characters without a key of their own go through x86Sim's typing
         phone::x86sim_ok(dev, &["type", text])?;
     }
-    Ok(format!("typed {} characters", text.chars().count()))
+    Ok(format!(
+        "typed {} characters as key presses",
+        text.chars().count()
+    ))
+}
+
+/// Asks the app in front to insert `text` into its focused field; false when it has none (or does not answer).
+fn insert_text(dev: &Device, text: &str) -> Result<bool> {
+    springboard(dev, "front")?;
+    let dir = phone::data_dir(dev).join("tmp/agent-sim");
+    let front: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("front.json"))?)?;
+    let Some(pid) = front.get("pid").and_then(|p| p.as_u64()).filter(|p| *p > 0) else {
+        return Ok(false);
+    };
+    let pid = pid as u32;
+    let Some(&linux) = phone::processes(dev, |inner, _| inner == pid)?.first() else {
+        return Ok(false);
+    };
+    let answer = dir.join(format!("answer-{pid}.txt"));
+    let _ = std::fs::remove_file(&answer);
+    std::fs::write(
+        dir.join(format!("cmd-{pid}.txt")),
+        format!("insert\n{text}"),
+    )?;
+    phone::signal(linux, libc::SIGUSR2)?;
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(3) {
+        if let Ok(a) = std::fs::read_to_string(&answer) {
+            return Ok(a == "ok");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = std::fs::remove_file(dir.join(format!("cmd-{pid}.txt")));
+    Ok(false)
 }
 
 pub fn press(dev: &Device, button: &str) -> Result<String> {

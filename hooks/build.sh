@@ -10,7 +10,7 @@ SDK=${SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}
 mkdir -p prebuilt
 for src in springboard.c ax.c; do
 	out=prebuilt/libagentsim-${src%.c}.dylib
-	clang -arch arm64 -isysroot "$SDK" -mmacosx-version-min=14.0 -O2 -Wall \
+	clang -arch arm64 -isysroot "$SDK" -mmacosx-version-min=14.0 -O2 -Wall -fblocks \
 		-dynamiclib -install_name "@rpath/${out##*/}" -lobjc -o "$out" "$src"
 	python3 retag.py "$out"
 	codesign -f -s - "$out" 2>/dev/null

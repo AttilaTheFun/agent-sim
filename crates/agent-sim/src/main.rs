@@ -63,7 +63,12 @@ enum Command {
         hold_ms: u64,
     },
     /// Type text into the focused field (\n is Return).
-    Type { text: String },
+    Type {
+        text: String,
+        /// Send key presses instead of inserting the text (for apps that watch keystrokes).
+        #[arg(long)]
+        keys: bool,
+    },
     /// Scroll the content: down shows what is below.
     Scroll {
         #[arg(value_parser = ["up", "down", "left", "right"])]
@@ -249,7 +254,9 @@ fn main() -> Result<()> {
         Command::Snapshot { json } => say(cmd::snapshot(&dev()?, json)),
         Command::Screenshot { out } => say(cmd::screenshot(&dev()?, out)),
         Command::Tap { target, hold_ms } => say(cmd::tap(&dev()?, &target, hold_ms)),
-        Command::Type { text } => say(cmd::type_text(&dev()?, &text.replace("\\n", "\n"))),
+        Command::Type { text, keys } => {
+            say(cmd::type_text(&dev()?, &text.replace("\\n", "\n"), keys))
+        }
         Command::Scroll { direction, amount } => say(cmd::scroll(&dev()?, &direction, amount)),
         Command::Swipe { x1, y1, x2, y2, ms } => say(cmd::swipe(&dev()?, (x1, y1), (x2, y2), ms)),
         Command::Press { button } => say(cmd::press(&dev()?, &button)),

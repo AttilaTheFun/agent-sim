@@ -62,6 +62,14 @@ pub fn data_dir(dev: &Device) -> PathBuf {
 /// Linux pids of this phone's processes for which `pick` holds, given each process's Darling pid (the pid the
 /// phone itself uses) and the basename of its executable.
 pub fn processes(dev: &Device, pick: impl Fn(u32, &str) -> bool) -> Result<Vec<u32>> {
+    Ok(process_ids(dev, pick)?
+        .into_iter()
+        .map(|(l, _)| l)
+        .collect())
+}
+
+/// Like processes, with each one's Darling pid: (Linux pid, Darling pid).
+pub fn process_ids(dev: &Device, pick: impl Fn(u32, &str) -> bool) -> Result<Vec<(u32, u32)>> {
     let name = device_name(dev)?;
     let want = format!("SIMULATOR_DEVICE_NAME={name}");
     let mut out = Vec::new();
@@ -99,7 +107,7 @@ pub fn processes(dev: &Device, pick: impl Fn(u32, &str) -> bool) -> Result<Vec<u
             continue;
         };
         if environ.split(|b| *b == 0).any(|v| v == want.as_bytes()) {
-            out.push(pid);
+            out.push((pid, inner));
         }
     }
     Ok(out)

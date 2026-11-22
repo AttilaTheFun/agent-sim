@@ -8,7 +8,11 @@
 // follows UIKit's accessibility containers (accessibilityElements / accessibilityElementAtIndex:) and views'
 // subviews, skipping hidden ones, as VoiceOver sees the screen.
 //
-// Loaded into every phone process by scripts/phone.sh; inert until UIKit is loaded and the signal arrives.
+// WebKit's WebContent processes answer too, with the elements of the web pages they draw (ax-<pid>.json, process
+// "WebContent").
+//
+// Loaded into every phone process by scripts/phone.sh; inert until UIKit (or WebKit's page accessibility) is loaded
+// and the signal arrives.
 #include <objc/runtime.h>
 #include <objc/message.h>
 #include <mach-o/dyld.h>
@@ -81,7 +85,7 @@ static const struct { unsigned long bit; const char *name; } kTraits[] = {
 	{1ul << 5, "keyboard-key"}, {1ul << 6, "static-text"}, {1ul << 7, "summary"}, {1ul << 8, "not-enabled"},
 	{1ul << 9, "updates-frequently"}, {1ul << 10, "search-field"}, {1ul << 12, "adjustable"},
 	{1ul << 13, "allows-direct-interaction"}, {1ul << 14, "causes-page-turn"}, {1ul << 16, "header"},
-	{1ul << 17, "tab-bar"}, {1ul << 18, "toggle"},
+	{1ul << 18, "text-field"},  // UIKit's private text entry trait: native and web text fields, search fields
 };
 
 static int emitted;
@@ -110,10 +114,18 @@ static void emit(id e) {
 	putf("],\"frame\":[%.1f,%.1f,%.1f,%.1f]}", f.x, f.y, f.w, f.h);
 }
 
+// the web views on screen (their content is in WebContent's answer)
+static Rect g_webviews[16];
+static int g_nwebviews;
+
 static void walk(id o, int depth) {
 	if (!o || depth > 60 || emitted > 2000) return;
 	if (getb(o, "accessibilityElementsHidden")) return;
 	if (kind(o, "UIView") && (getb(o, "isHidden") || getd(o, "alpha") < 0.01)) return;
+	if (g_nwebviews < 16 && kind(o, "WKWebView")) {
+		Rect f = frame_of(o);
+		if (f.w > 0 && f.h > 0) g_webviews[g_nwebviews++] = f;
+	}
 	if (getb(o, "isAccessibilityElement")) {
 		emit(o);
 		return;
@@ -236,6 +248,11 @@ static void request(void) {
 		write_file("answer.txt", r, strlen(r));
 		return;
 	}
+	if (!strncmp(req, "front", 5)) {
+		write_front();
+		write_file("answer.txt", "ok", 2);
+		return;
+	}
 	id pb = SEND(id, (id)objc_getClass("UIPasteboard"), "generalPasteboard")((id)objc_getClass("UIPasteboard"), SEL_("generalPasteboard"));
 	if (!pb) return;
 	if (!strncmp(req, "pasteboard-set\n", 15)) {
@@ -247,16 +264,123 @@ static void request(void) {
 	}
 }
 
+// WebKit's WebContent process draws web views for the apps; its accessibility tree hangs off one page object per web
+// page, recorded here as WebKit creates them (there is no way to look them up afterwards).
+#define MAXPAGES 64
+static id g_pages[MAXPAGES];
+static IMP g_page_init;
+static id page_init(id self, SEL s) {
+	id r = ((id (*)(id, SEL))g_page_init)(self, s);
+	if (r) {
+		for (int i = 0; i < MAXPAGES; i++)
+			if (!g_pages[i]) { g_pages[i] = r; break; }  // page objects live as long as their page
+	}
+	return r;
+}
+static IMP g_page_dealloc;
+static id g_warm[MAXPAGES];
+static void page_dealloc(id self, SEL s) {
+	for (int i = 0; i < MAXPAGES; i++) {
+		if (g_pages[i] == self) g_pages[i] = nil;
+		if (g_warm[i] == self) g_warm[i] = nil;
+	}
+	((void (*)(id, SEL))g_page_dealloc)(self, s);
+}
+static bool is_webcontent(void) { return strstr(getprogname(), "WebContent") != NULL; }
+
+// The first walk of a page's tree makes WebKit build it; its frames then lack the web view's position until the app
+// side has answered, so a page seen for the first time is walked once, and answered for half a second later.
+static void dump_web_now(void *ctx);
+static void dump_web(void) {
+	bool cold = false;
+	for (int i = 0; i < MAXPAGES; i++) {
+		id page = g_pages[i];
+		if (!page) continue;
+		bool known = false;
+		for (int k = 0; k < MAXPAGES; k++) known |= g_warm[k] == page;
+		if (known) continue;
+		cold = true;
+		emitted = 0;
+		walk(get(page, "accessibilityRootObjectWrapper"), 0);
+		for (int k = 0; k < MAXPAGES; k++)
+			if (!g_warm[k]) { g_warm[k] = page; break; }
+	}
+	len = 0;
+	if (cold) dispatch_after_f(dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_MSEC), dispatch_get_main_queue(), NULL, dump_web_now);
+	else dump_web_now(NULL);
+}
+static void dump_web_now(void *ctx) {
+	len = 0;
+	char head[256];
+	snprintf(head, sizeof head, "{\"pid\":%d,\"process\":\"WebContent\",\"windows\":[", getpid());
+	puts_(head);
+	int w = 0;
+	for (int i = 0; i < MAXPAGES; i++) {
+		id page = g_pages[i];
+		if (!page) continue;
+		id root = get(page, "accessibilityRootObjectWrapper");
+		if (!root) continue;
+		if (w++) puts_(",");
+		puts_("{\"class\":\"WebPage\",\"level\":0,\"elements\":[");
+		emitted = 0;
+		walk(root, 0);
+		puts_("]}");
+	}
+	puts_("]}\n");
+	char name[64];
+	snprintf(name, sizeof name, "ax-%d.json", getpid());
+	write_file(name, buf, len);
+}
+
+// An app: text for the field that has focus, in cmd-<pid>.txt ("insert\n<text>"), inserted as the software
+// keyboard inserts it (UIKeyInput insertText:). Key events from the hardware keyboard reached native fields but
+// lost most characters in web fields. The answer (ok, or no-field) goes to answer-<pid>.txt.
+static bool app_request(void) {
+	char path[1200], name[64];
+	snprintf(path, sizeof path, "%s/cmd-%d.txt", dir, getpid());
+	FILE *f = fopen(path, "r");
+	if (!f) return false;
+	static char req[65536];
+	size_t n = fread(req, 1, sizeof req - 1, f);
+	fclose(f);
+	unlink(path);
+	req[n] = 0;
+	snprintf(name, sizeof name, "answer-%d.txt", getpid());
+	if (strncmp(req, "insert\n", 7)) {
+		write_file(name, "unknown", 7);
+		return true;
+	}
+	id app = SEND(id, (id)objc_getClass("UIApplication"), "sharedApplication")((id)objc_getClass("UIApplication"), SEL_("sharedApplication"));
+	id wins = get(app, "windows"), responder = nil;
+	for (unsigned long i = 0, m = count(wins); i < m && !responder; i++) {
+		id r = get(at(wins, i), "firstResponder");
+		if (r && responds(r, "insertText:")) responder = r;
+	}
+	if (!responder) {
+		write_file(name, "no-field", 8);
+		return true;
+	}
+	SEND(void, responder, "insertText:", id)(responder, SEL_("insertText:"), nsstring(req + 7));
+	write_file(name, "ok", 2);
+	return true;
+}
+
 static void dump(void *ctx) {
 	if (!strcmp(getprogname(), "SpringBoard")) request();
+	else if (!is_webcontent() && app_request()) return;
 	len = 0;
 	emitted = 0;
+	if (is_webcontent()) {
+		dump_web();
+		return;
+	}
 	id app = SEND(id, (id)objc_getClass("UIApplication"), "sharedApplication")((id)objc_getClass("UIApplication"), SEL_("sharedApplication"));
 	char head[256];
 	snprintf(head, sizeof head, "{\"pid\":%d,\"process\":\"%s\",\"windows\":[", getpid(), getprogname());
 	puts_(head);
 	id wins = get(app, "windows");
 	int w = 0;
+	g_nwebviews = 0;
 	for (unsigned long i = 0, n = count(wins); i < n; i++) {
 		id win = at(wins, i);
 		if (getb(win, "isHidden") || getd(win, "alpha") < 0.01) continue;
@@ -266,6 +390,14 @@ static void dump(void *ctx) {
 		emitted = 0;
 		walk(win, 0);
 		puts_("]}");
+	}
+	puts_("],\"webviews\":[");
+	for (int i = 0; i < g_nwebviews; i++)
+	{
+		char t[160];
+		int n = snprintf(t, sizeof t, "%s[%.1f,%.1f,%.1f,%.1f]", i ? "," : "", g_webviews[i].x, g_webviews[i].y,
+			g_webviews[i].w, g_webviews[i].h);
+		put(t, n);
 	}
 	puts_("]}\n");
 	char name[64];
@@ -290,9 +422,49 @@ static void start(void) {
 	dispatch_source_set_event_handler_f(s, dump);
 	dispatch_resume(s);
 }
+// An idle WebContent process took seconds to run work queued for its main thread (its run loop did not wake for
+// the main dispatch queue), so there a thread looks for a request file (req-<pid>) every 150 ms, puts the work on
+// the main run loop itself and wakes it.
+#include <pthread.h>
+#include <dlfcn.h>
+static void *watch_requests(void *arg) {
+	char path[1200];
+	snprintf(path, sizeof path, "%s/req-%d", dir, getpid());
+	void *(*get_main)(void) = dlsym(RTLD_DEFAULT, "CFRunLoopGetMain");
+	void (*perform)(void *, const void *, void (^)(void)) = dlsym(RTLD_DEFAULT, "CFRunLoopPerformBlock");
+	void (*wake)(void *) = dlsym(RTLD_DEFAULT, "CFRunLoopWakeUp");
+	const void **common = dlsym(RTLD_DEFAULT, "kCFRunLoopCommonModes");
+	for (;;) {
+		usleep(150000);
+		if (access(path, F_OK) != 0) continue;
+		unlink(path);
+		if (get_main && perform && wake && common) {
+			void *rl = get_main();
+			perform(rl, *common, ^{ dump(NULL); });
+			wake(rl);
+		} else {
+			dispatch_async_f(dispatch_get_main_queue(), NULL, dump);
+		}
+	}
+	return NULL;
+}
+
 static void added(const struct mach_header *mh, intptr_t slide) {
 	static bool on;
-	if (!on && objc_getClass("UIApplication")) {
+	if (on) return;
+	if (is_webcontent()) {
+		Class c = objc_getClass("WKAccessibilityWebPageObject");
+		Method m = c ? class_getInstanceMethod(c, SEL_("init")) : NULL;
+		if (!m) return;
+		Method d = class_getInstanceMethod(c, SEL_("dealloc"));
+		if (!d) return;
+		g_page_init = method_setImplementation(m, (IMP)page_init);
+		g_page_dealloc = method_setImplementation(d, (IMP)page_dealloc);
+		on = true;
+		start();
+		pthread_t t;
+		if (pthread_create(&t, NULL, watch_requests, NULL) == 0) pthread_detach(t);
+	} else if (objc_getClass("UIApplication")) {
 		on = true;
 		start();
 	}

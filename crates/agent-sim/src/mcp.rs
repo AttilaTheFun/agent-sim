@@ -195,7 +195,8 @@ fn call(default_device: &str, name: &str, args: &Value) -> Result<Value> {
             then_snapshot(&dev, done)
         }
         "type" => {
-            let done = cmd::type_text(&dev, &s(args, "text")?.replace("\\n", "\n"))?;
+            let keys = args.get("keys").and_then(Value::as_bool).unwrap_or(false);
+            let done = cmd::type_text(&dev, &s(args, "text")?.replace("\\n", "\n"), keys)?;
             then_snapshot(&dev, done)
         }
         "scroll" => {
