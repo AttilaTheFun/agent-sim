@@ -39,6 +39,12 @@ work queued for its main thread or to handle a signal. `snapshot` waits for it, 
 has just changed it takes several seconds. Measured, not yet explained: the next item to look into in Darling and
 x86Sim (docs/PARITY.md).
 
+### A pre-translation pass can fail
+
+`x86sim aot update` sometimes stops with "constant pool conflict" on one library (seen on SpringBoard after training
+runs from several phones). The image already built stays in use, so the phone runs; that library's newly hot code is
+translated as it runs instead. setup-vm.sh carries on with a warning. An x86Sim issue, to report upstream.
+
 ### Siri does not open
 
 Neither the Siri app (`com.apple.SiriApp`; launching it returns no process) nor the Siri button brings up Siri's UI,
