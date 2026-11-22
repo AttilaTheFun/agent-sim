@@ -6,9 +6,10 @@
 #   scripts/phone.sh stop [DEVICE]
 #   scripts/phone.sh status [DEVICE]
 #
-# Settings, each overridable from the environment:
-#   X86SIM_METAL=0   software drawing: faster than Metal on Mesa's CPU Vulkan driver on GPU-less machines
-#   A64_JOBS=slim    x86Sim's smaller list of background services
+# Settings, each overridable from the environment (docs/BENCHMARKS.md has the measurements):
+#   X86SIM_METAL=backboardd   Metal on Mesa's CPU Vulkan driver (lavapipe): smoother scrolling than software drawing
+#   LP_NUM_THREADS            lavapipe's threads: two fewer than the CPUs, 2 to 6
+#   A64_JOBS=slim             x86Sim's smaller list of background services
 # The frame ring lives under ~/.cache rather than /run/user: x86Sim's container does not always see the host's
 # /run/user (no login session on a server), and then no frame ever reaches the host.
 set -Eeuo pipefail
@@ -43,7 +44,8 @@ start)
 	rm -f "$RING" "$RING".* "$DIR/data/framebuffer.bgra"
 	systemd-run --user --quiet --unit="$UNIT" --collect \
 		--setenv=SIMFB_RING="/Volumes/SystemRoot$RING" \
-		--setenv=X86SIM_METAL="${X86SIM_METAL:-0}" \
+		--setenv=X86SIM_METAL="${X86SIM_METAL:-backboardd}" \
+		--setenv=LP_NUM_THREADS="${LP_NUM_THREADS:-$(n=$(($(nproc) - 2)); echo $((n < 2 ? 2 : n > 6 ? 6 : n)))}" \
 		--setenv=A64_JOBS="${A64_JOBS:-slim}" \
 		--setenv=VK_ICD_FILENAMES="${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json}" \
 		"$X" shell -c "A64_DEVICE=$DIR A64_KEEP=1 SECS=7200 cli/libexec/arm64/boot-a64.sh"

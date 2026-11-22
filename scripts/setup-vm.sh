@@ -101,13 +101,25 @@ aot_status() {
 	s=$("$X" aot --device "$DATA/var/device-a64-$DEVICE" status 2>/dev/null) || true
 	grep -m1 '^image ' <<<"$s" || true
 }
-trained=$DATA/var/device-a64-$DEVICE/.agent-sim-trained
-if [[ $(aot_status) != *"(current)"* ]]; then
-	if [ ! -e "$trained" ]; then
-		log "First boot, to learn what the phone runs (a new phone sets itself up: a few minutes)"
+DIR=$DATA/var/device-a64-$DEVICE
+trained=$DIR/.agent-sim-trained
+calm=$DIR/.agent-sim-reduced-effects
+RUNTIME_ROOT=$(ls -d "$DATA"/runtimes/*-"$RUNTIME_BUILD"-arm64/extracted/Library/Developer/CoreSimulator/Profiles/Runtimes/*.simruntime/Contents/Resources/RuntimeRoot | head -1)
+# Reduce Transparency and Reduce Motion: blurs and long animations are the costliest things to draw on a CPU
+reduce_effects() {
+	for key in ReduceMotionEnabled EnhancedBackgroundContrastEnabled; do
+		(cd "$DATA" && X86SIM_DEVICE=$DIR "$X" x86sim spawn "$RUNTIME_ROOT/usr/bin/defaults" \
+			write com.apple.Accessibility "$key" -bool true >/dev/null)
+	done
+	touch "$calm"
+}
+if [[ $(aot_status) != *"(current)"* ]] || [ ! -e "$calm" ]; then
+	if [ ! -e "$trained" ] || [ ! -e "$calm" ]; then
+		log "Booting the phone once: it learns what runs, and turns on Reduce Transparency and Motion"
 		"$HERE/phone.sh" start "$DEVICE"
 		TIMEOUT=1800 "$HERE/phone.sh" wait "$DEVICE"
-		sleep 120
+		reduce_effects
+		[ -e "$trained" ] || sleep 120
 		"$HERE/phone.sh" stop "$DEVICE"
 		touch "$trained"
 	fi
