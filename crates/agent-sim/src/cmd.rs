@@ -50,19 +50,13 @@ pub fn status() -> Result<()> {
     Ok(())
 }
 
-pub fn screenshot(dev: &Device, out: Option<PathBuf>) -> Result<()> {
+pub fn screenshot_png(dev: &Device) -> Result<Vec<u8>> {
     let mut ring = Ring::new(&dev.ring_path()?);
     let frame = ring
         .latest()
         .context("no frame yet: is the phone running?")?;
-    let out = out.unwrap_or_else(|| PathBuf::from("screenshot.png"));
-    let file =
-        std::fs::File::create(&out).with_context(|| format!("creating {}", out.display()))?;
-    let mut enc = png::Encoder::new(
-        std::io::BufWriter::new(file),
-        frame.width as u32,
-        frame.height as u32,
-    );
+    let mut png_bytes = Vec::new();
+    let mut enc = png::Encoder::new(&mut png_bytes, frame.width as u32, frame.height as u32);
     enc.set_color(png::ColorType::Rgb);
     enc.set_depth(png::BitDepth::Eight);
     enc.set_compression(png::Compression::Fast);
@@ -71,18 +65,23 @@ pub fn screenshot(dev: &Device, out: Option<PathBuf>) -> Result<()> {
         rgb.extend_from_slice(&[px[2], px[1], px[0]]);
     }
     enc.write_header()?.write_image_data(&rgb)?;
-    println!("{}", out.display());
-    Ok(())
+    Ok(png_bytes)
 }
 
-pub fn snapshot(dev: &Device, json: bool) -> Result<()> {
+pub fn screenshot(dev: &Device, out: Option<PathBuf>) -> Result<String> {
+    let out = out.unwrap_or_else(|| PathBuf::from("screenshot.png"));
+    std::fs::write(&out, screenshot_png(dev)?)
+        .with_context(|| format!("writing {}", out.display()))?;
+    Ok(out.display().to_string())
+}
+
+pub fn snapshot(dev: &Device, json: bool) -> Result<String> {
     let s = ax::snapshot(dev)?;
-    if json {
-        println!("{}", serde_json::to_string_pretty(&s)?);
+    Ok(if json {
+        serde_json::to_string_pretty(&s)?
     } else {
-        print!("{}", ax::format(&s));
-    }
-    Ok(())
+        ax::format(&s).trim_end().to_string()
+    })
 }
 
 /// Where a tap target is: `@e3`, `x y` in screen points, or text an element's label, value or id contains.
@@ -98,12 +97,20 @@ fn point(dev: &Device, target: &[String]) -> Result<(f64, f64, String)> {
         }
         [] => bail!("tap what? an element (@e3), a point (x y) or text"),
         words => {
+            // the screen may still be changing (an app opening, a page sliding in): look again for a moment
             let text = words.join(" ");
-            let s = ax::snapshot(dev)?;
-            let e = ax::find(&s, &text)
-                .with_context(|| format!("nothing on screen matches {text:?}"))?;
-            let (x, y) = e.center();
-            Ok((x, y, describe(e)))
+            let start = Instant::now();
+            loop {
+                let s = ax::snapshot(dev)?;
+                if let Some(e) = ax::find(&s, &text) {
+                    let (x, y) = e.center();
+                    return Ok((x, y, describe(e)));
+                }
+                if start.elapsed() > Duration::from_secs(3) {
+                    bail!("nothing on screen matches \"{text}\"");
+                }
+                std::thread::sleep(Duration::from_millis(400));
+            }
         }
     }
 }
@@ -119,7 +126,7 @@ fn hid(dev: &Device) -> Hid {
     Hid::new(dev.hid_socket())
 }
 
-pub fn tap(dev: &Device, target: &[String], hold_ms: u64) -> Result<()> {
+pub fn tap(dev: &Device, target: &[String], hold_ms: u64) -> Result<String> {
     let (x, y, what) = point(dev, target)?;
     let scr = Screen::of(dev)?;
     let (u, v) = scr.unit(x, y);
@@ -127,11 +134,10 @@ pub fn tap(dev: &Device, target: &[String], hold_ms: u64) -> Result<()> {
     h.touch("down", u, v)?;
     std::thread::sleep(Duration::from_millis(hold_ms.max(80)));
     h.touch("up", u, v)?;
-    println!("tapped {what}");
-    Ok(())
+    Ok(format!("tapped {what}"))
 }
 
-pub fn swipe(dev: &Device, from: (f64, f64), to: (f64, f64), ms: u64) -> Result<()> {
+pub fn swipe(dev: &Device, from: (f64, f64), to: (f64, f64), ms: u64) -> Result<String> {
     let scr = Screen::of(dev)?;
     let mut h = hid(dev);
     let steps = (ms / 16).clamp(4, 120);
@@ -146,11 +152,14 @@ pub fn swipe(dev: &Device, from: (f64, f64), to: (f64, f64), ms: u64) -> Result<
     }
     let (u, v) = scr.unit(to.0, to.1);
     h.touch("up", u, v)?;
-    Ok(())
+    Ok(format!(
+        "swiped ({:.0},{:.0}) to ({:.0},{:.0})",
+        from.0, from.1, to.0, to.1
+    ))
 }
 
 /// Scrolls the content: `down` shows what is below (the finger moves up), as on a phone.
-pub fn scroll(dev: &Device, dir: &str, amount: f64) -> Result<()> {
+pub fn scroll(dev: &Device, dir: &str, amount: f64) -> Result<String> {
     let scr = Screen::of(dev)?;
     let (cx, cy) = (scr.width / 2.0, scr.height / 2.0);
     let d = scr.height * 0.35 * amount.clamp(0.1, 2.0);
@@ -162,22 +171,20 @@ pub fn scroll(dev: &Device, dir: &str, amount: f64) -> Result<()> {
         _ => bail!("scroll up, down, left or right"),
     };
     swipe(dev, from, to, 300)?;
-    println!("scrolled {dir}");
-    Ok(())
+    Ok(format!("scrolled {dir}"))
 }
 
-pub fn type_text(dev: &Device, text: &str) -> Result<()> {
+pub fn type_text(dev: &Device, text: &str) -> Result<String> {
     if text.chars().all(|c| crate::input::key_usage(c).is_some()) {
         hid(dev).text(text)?;
     } else {
         // characters without a key of their own go through x86Sim's typing
         phone::x86sim_ok(dev, &["type", text])?;
     }
-    println!("typed {} characters", text.chars().count());
-    Ok(())
+    Ok(format!("typed {} characters", text.chars().count()))
 }
 
-pub fn press(dev: &Device, button: &str) -> Result<()> {
+pub fn press(dev: &Device, button: &str) -> Result<String> {
     match button {
         "home" | "lock" | "volup" | "voldown" => {
             let mut h = hid(dev);
@@ -189,33 +196,35 @@ pub fn press(dev: &Device, button: &str) -> Result<()> {
             phone::x86sim_ok(dev, &["button", button])?;
         }
     }
-    println!("pressed {button}");
-    Ok(())
+    Ok(format!("pressed {button}"))
 }
 
-pub fn launch(dev: &Device, bundle: &str) -> Result<()> {
-    let out = phone::x86sim_ok(dev, &["launch", bundle])?;
+pub fn launch(dev: &Device, bundle: &str) -> Result<String> {
+    let out = phone::x86sim_ok(dev, &["launch", bundle]).map_err(|e| {
+        if format!("{e:#}").contains("returned nil for") {
+            anyhow::anyhow!("{bundle} is not installed (`agent-sim apps --all` lists what is)")
+        } else {
+            e
+        }
+    })?;
     let pid = out.split_whitespace().last().unwrap_or("?");
     if pid == "-1" {
         bail!("{bundle} did not start (is it installed? `agent-sim apps`)");
     }
-    println!("launched {bundle} (pid {pid})");
-    Ok(())
+    Ok(format!("launched {bundle} (pid {pid})"))
 }
 
-pub fn terminate(dev: &Device, bundle: &str) -> Result<()> {
+pub fn terminate(dev: &Device, bundle: &str) -> Result<String> {
     phone::x86sim_ok(dev, &["terminate", bundle])?;
-    println!("terminated {bundle}");
-    Ok(())
+    Ok(format!("terminated {bundle}"))
 }
 
-pub fn open_url(dev: &Device, url: &str) -> Result<()> {
+pub fn open_url(dev: &Device, url: &str) -> Result<String> {
     phone::x86sim_ok(dev, &["openurl", url])?;
-    println!("opened {url}");
-    Ok(())
+    Ok(format!("opened {url}"))
 }
 
-pub fn apps(dev: &Device, all: bool) -> Result<()> {
+pub fn apps(dev: &Device, all: bool) -> Result<String> {
     let out = phone::x86sim_ok(dev, &["listapps", "--json"])?;
     let v: serde_json::Value = serde_json::from_str(&out).context("reading x86sim listapps")?;
     let map = v
@@ -236,45 +245,38 @@ pub fn apps(dev: &Device, all: bool) -> Result<()> {
         .collect();
     rows.sort();
     if rows.is_empty() {
-        println!(
+        return Ok(
             "no apps installed yet (`agent-sim install App.app|App.ipa`; --all lists the system's)"
+                .into(),
         );
     }
-    for (id, name, kind) in rows {
-        println!("{id}\t{name}\t{}", kind.to_lowercase());
-    }
-    Ok(())
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, kind)| format!("{id}\t{name}\t{}", kind.to_lowercase()))
+        .collect::<Vec<_>>()
+        .join("\n"))
 }
 
-pub fn install(dev: &Device, path: &Path) -> Result<()> {
+pub fn install(dev: &Device, path: &Path) -> Result<String> {
     let app = crate::ipa::prepare(path)?;
-    let out = phone::x86sim_ok(dev, &["install", &app.path.to_string_lossy()])?;
-    let _ = out;
-    println!("installed {}", app.bundle_id);
-    Ok(())
+    phone::x86sim_ok(dev, &["install", &app.path.to_string_lossy()])?;
+    Ok(format!("installed {}", app.bundle_id))
 }
 
-pub fn uninstall(dev: &Device, bundle: &str) -> Result<()> {
+pub fn uninstall(dev: &Device, bundle: &str) -> Result<String> {
     phone::x86sim_ok(dev, &["uninstall", bundle])?;
-    println!("uninstalled {bundle}");
-    Ok(())
+    Ok(format!("uninstalled {bundle}"))
 }
 
 /// Waits until an element whose label, value or id contains `text` is on screen (or, with `gone`, is not).
-pub fn wait(dev: &Device, text: &str, timeout: Duration, gone: bool) -> Result<()> {
+pub fn wait(dev: &Device, text: &str, timeout: Duration, gone: bool) -> Result<String> {
     let start = Instant::now();
     loop {
         let s = ax::snapshot(dev)?;
         let hit = ax::find(&s, text);
         match (hit, gone) {
-            (Some(e), false) => {
-                println!("found {}", describe(e));
-                return Ok(());
-            }
-            (None, true) => {
-                println!("{text:?} is gone");
-                return Ok(());
-            }
+            (Some(e), false) => return Ok(format!("found {}", describe(e))),
+            (None, true) => return Ok(format!("\"{text}\" is gone")),
             _ => {}
         }
         if start.elapsed() > timeout {

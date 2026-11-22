@@ -4,6 +4,7 @@ mod device;
 mod encode_bench;
 mod input;
 mod ipa;
+mod mcp;
 mod phone;
 mod ring;
 mod serve;
@@ -32,6 +33,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Set this machine up: x86Sim, Apple's iOS runtime (about 8 GB, from Apple) and a first phone. Re-runnable.
+    Setup,
     /// Boot the phone and wait for its home screen.
     Up,
     /// Shut the phone down.
@@ -104,6 +107,13 @@ enum Command {
         #[arg(long)]
         gone: bool,
     },
+    /// Keep phones booted for agents: `pool up 3`, `pool take`, `pool release NAME`, `pool status`, `pool down`.
+    Pool {
+        #[arg(required = true, num_args = 1..=2)]
+        args: Vec<String>,
+    },
+    /// Serve agent-sim's tools over MCP (stdio), for Claude Code, Cursor and other MCP clients.
+    Mcp,
     /// Stream a running phone to a browser and take input back.
     Serve {
         /// Address to listen on.
@@ -144,6 +154,11 @@ fn random_token() -> Result<String> {
     Ok(b.iter().map(|x| format!("{x:02x}")).collect())
 }
 
+fn say(r: Result<String>) -> Result<()> {
+    println!("{}", r?);
+    Ok(())
+}
+
 fn main() -> Result<()> {
     // piped into `head` and the like: stop quietly when the reader goes away, as command-line tools do
     // SAFETY: setting a signal's disposition to its default before any other thread exists
@@ -155,32 +170,38 @@ fn main() -> Result<()> {
     let name = phone::pick_device(cli.device.as_deref());
     let dev = || device::Device::find(&name);
     match cli.command {
+        Command::Setup => phone::script("setup-vm.sh", &[], &[("DEVICE", name.as_str())]),
+        Command::Pool { args } => {
+            let a: Vec<&str> = args.iter().map(String::as_str).collect();
+            phone::script("pool.sh", &a, &[])
+        }
+        Command::Mcp => mcp::run(&name),
         Command::Up => cmd::up(&name),
         Command::Down => cmd::down(&name),
         Command::Status => cmd::status(),
-        Command::Snapshot { json } => cmd::snapshot(&dev()?, json),
-        Command::Screenshot { out } => cmd::screenshot(&dev()?, out),
-        Command::Tap { target, hold_ms } => cmd::tap(&dev()?, &target, hold_ms),
-        Command::Type { text } => cmd::type_text(&dev()?, &text.replace("\\n", "\n")),
-        Command::Scroll { direction, amount } => cmd::scroll(&dev()?, &direction, amount),
-        Command::Swipe { x1, y1, x2, y2, ms } => cmd::swipe(&dev()?, (x1, y1), (x2, y2), ms),
-        Command::Press { button } => cmd::press(&dev()?, &button),
-        Command::Install { path } => cmd::install(&dev()?, &path),
-        Command::Uninstall { bundle_id } => cmd::uninstall(&dev()?, &bundle_id),
-        Command::Launch { bundle_id } => cmd::launch(&dev()?, &bundle_id),
-        Command::Terminate { bundle_id } => cmd::terminate(&dev()?, &bundle_id),
-        Command::Apps { all } => cmd::apps(&dev()?, all),
-        Command::Open { url } => cmd::open_url(&dev()?, &url),
+        Command::Snapshot { json } => say(cmd::snapshot(&dev()?, json)),
+        Command::Screenshot { out } => say(cmd::screenshot(&dev()?, out)),
+        Command::Tap { target, hold_ms } => say(cmd::tap(&dev()?, &target, hold_ms)),
+        Command::Type { text } => say(cmd::type_text(&dev()?, &text.replace("\\n", "\n"))),
+        Command::Scroll { direction, amount } => say(cmd::scroll(&dev()?, &direction, amount)),
+        Command::Swipe { x1, y1, x2, y2, ms } => say(cmd::swipe(&dev()?, (x1, y1), (x2, y2), ms)),
+        Command::Press { button } => say(cmd::press(&dev()?, &button)),
+        Command::Install { path } => say(cmd::install(&dev()?, &path)),
+        Command::Uninstall { bundle_id } => say(cmd::uninstall(&dev()?, &bundle_id)),
+        Command::Launch { bundle_id } => say(cmd::launch(&dev()?, &bundle_id)),
+        Command::Terminate { bundle_id } => say(cmd::terminate(&dev()?, &bundle_id)),
+        Command::Apps { all } => say(cmd::apps(&dev()?, all)),
+        Command::Open { url } => say(cmd::open_url(&dev()?, &url)),
         Command::Wait {
             text,
             timeout,
             gone,
-        } => cmd::wait(
+        } => say(cmd::wait(
             &dev()?,
             &text,
             Duration::from_secs_f64(timeout.max(0.0)),
             gone,
-        ),
+        )),
         Command::EncodeBench {
             width,
             height,

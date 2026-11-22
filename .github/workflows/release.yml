@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        run: |
+          d=agent-sim-${GITHUB_REF_NAME}
+          mkdir -p "$d/bin"
+          cp target/release/agent-sim "$d/bin/"
+          cp -r scripts hooks patches docs README.md LICENSE "$d/"
+          tar -czf agent-sim-x86_64-linux.tar.gz "$d"
+          sha256sum agent-sim-x86_64-linux.tar.gz > agent-sim-x86_64-linux.tar.gz.sha256
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" agent-sim-x86_64-linux.tar.gz agent-sim-x86_64-linux.tar.gz.sha256 \
+            --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
