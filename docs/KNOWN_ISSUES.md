@@ -12,15 +12,21 @@ x86Sim are reported there with the evidence below.
 | Photos closes at once; Wallet and Watch stay black | services they depend on are not in `slim` | `phone.sh` adds back assetsd, passd, financed, nanoregistryd, accountsd, amsaccountsd, mediaremoted, sharingd and medialibraryd |
 | Pages that start a web worker or service worker crash ("A problem repeatedly occurred") | WebKit asks for a new thread's stack bounds from the creating thread; x86Sim described the child's native stack, not the guest stack it runs on, and JavaScriptCore's `StackBounds::contains` check failed in `sanitizeStackForVM` | `patches/x86sim/0001-guest-stacks-of-new-threads.patch`, built by `scripts/patch-x86sim.sh` during setup |
 | Settings shows gray or blank row icons | Settings finds no rendered icon in the shared icon store and shows a placeholder; the store stays empty because iconservicesagent crashes rendering them: CoreUI force-unwraps `sharedCIContext`, which is nil when the process has no Metal device (x86Sim gives Metal only to the processes named in `X86SIM_METAL`) | `phone.sh` gives iconservicesagent Metal too (`X86SIM_METAL=backboardd,iconservicesagent`). A phone that ran without it keeps the blank icons it cached until its icon store is rebuilt (delete `data/Containers/Shared/SystemGroup/systemgroup.com.apple.lsd.iconscache/Library/Caches/com.apple.IconsCache` with the phone stopped) |
-| Permission prompts stay on screen over other apps | see below | `setup-vm.sh` grants the built-in apps their permissions up front, as on a phone that has been set up; apps you install still ask |
+| A permission prompt stays on screen after the app that asked quits or crashes | Darling delivers a Mach dead-name notification within a process but loses it when the port's owner is another process that died. SpringBoard watches the prompt's reply port for that notification and tccd watches the asking app's connection the same way, so neither noticed | `hooks/springboard.c`, loaded into SpringBoard by `phone.sh`, checks each alert once a second and cancels it when the process that posted it, or the app a permission prompt names, is gone. tccd records the canceled prompt as "denied, prompt canceled" (reason 13); reset with `x86sim privacy reset` |
+| Built-in apps' permission prompts get in the way of other apps | a prompt stays up over every app until answered, as on iOS | `setup-vm.sh` grants the built-in apps their permissions up front, as on a phone that has been set up; apps you install still ask |
 
 ## Open
 
-### Permission prompts are not dismissed when their app leaves
+### Lost dead-name notifications (root cause, in Darling)
 
-On a device, SpringBoard cancels an app's permission alert when the requesting process's reply port dies, and
-holds it back while the app is not in front. Under x86Sim neither happens, so a prompt from one app stays over the
-next. Likely a missing dead-name notification or display-layout update in Darling.
+When a process dies, Darling turns the send rights other processes hold to its ports into dead names, but the
+dead-name notifications they asked for never arrive (a test inside one process gets both the raw notification and
+libdispatch's `DISPATCH_MACH_SEND_DEAD` event). Anything that relies on noticing a peer's death across processes, such
+as an XPC connection's interruption, is affected. The SpringBoard hook covers permission prompts; the fix belongs in
+Darling's darlingserver.
+
+Note that a permission prompt staying over other apps while its app is still running is iOS behavior, not this
+bug: SpringBoard ignores Home while such an alert is up ("an alert item or sheet is showing and can't be dismissed").
 
 ### News stays black
 

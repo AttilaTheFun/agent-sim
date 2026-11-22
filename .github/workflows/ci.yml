@@ -28,3 +28,10 @@ jobs:
         run: cargo test --locked
       - name: Release build
         run: cargo build --release --locked
+
+  hooks:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the simulator hooks
+        run: hooks/build.sh

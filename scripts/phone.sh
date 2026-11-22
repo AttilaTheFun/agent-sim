@@ -19,6 +19,7 @@
 #                             reaching it about 780 times a second and keeps more than a core busy at rest), and the
 #                             services Photos, Wallet and Watch need to open (assetsd, passd, financed,
 #                             nanoregistryd, accounts, media).
+#   AGENT_SIM_HOOKS=1         load agent-sim's hooks (hooks/prebuilt) into SpringBoard
 #   AGENT_SIM_KSM=1           share identical memory pages with other phones (KSM, when the kernel's is on)
 # The frame ring lives under ~/.cache rather than /run/user: x86Sim's container does not always see the host's
 # /run/user (no login session on a server), and then no frame ever reaches the host.
@@ -53,10 +54,23 @@ PENV=${X86SIM_SCRATCH:-$HOME/.cache/x86sim}/a64-penv
 DEFAULT_EXTRA_JOBS="com.apple.sleepd com.apple.assetsd com.apple.passd com.apple.financed com.apple.nanoregistryd
 	com.apple.accountsd com.apple.amsaccountsd com.apple.mediaremoted com.apple.sharingd com.apple.medialibraryd"
 DEFAULT_EXTRA_JOBS=$(echo $DEFAULT_EXTRA_JOBS)
+# agent-sim's own hooks (hooks/, built for the simulator) go into SpringBoard on top of the libraries x86Sim inserts
+# into every process: they dismiss a permission prompt whose app has quit (docs/KNOWN_ISSUES.md).
+HOOKS=$(cd "$(dirname "${BASH_SOURCE[0]}")/../hooks/prebuilt" 2>/dev/null && pwd || true)
 ensure_penv() {
 	mkdir -p "$(dirname "$PENV")"
+	touch "$PENV"
 	grep -qs '^com.apple.WebKit.WebContent .*GIGACAGE_ENABLED=0' "$PENV" ||
 		echo "com.apple.WebKit.WebContent GIGACAGE_ENABLED=0" >>"$PENV"
+	local keep line base
+	keep=$(grep -v '^SpringBoard .*libagentsim-' "$PENV" || true)
+	printf '%s\n' "$keep" | sed '/^$/d' >"$PENV"
+	[ "${AGENT_SIM_HOOKS:-1}" = 1 ] && [ -f "$HOOKS/libagentsim-springboard.dylib" ] || return 0
+	case $HOOKS in *[[:space:]]*) echo "phone.sh: hooks skipped: their path has a space ($HOOKS)" >&2; return 0 ;; esac
+	base=$(sed -n 's/^DYLD_INSERT_LIBRARIES=//p' "$DIR/sim.env")
+	line="SpringBoard DYLD_INSERT_LIBRARIES=${base:+$base:}/Volumes/SystemRoot$HOOKS/libagentsim-springboard.dylib"
+	[ -n "${AGENT_SIM_HOOK_LOG:-}" ] && line+=" AGENT_SIM_HOOK_LOG=$AGENT_SIM_HOOK_LOG"
+	echo "$line" >>"$PENV"
 }
 
 case $ACTION in
