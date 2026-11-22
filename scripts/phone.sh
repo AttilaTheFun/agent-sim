@@ -103,8 +103,24 @@ ensure_penv() {
 	echo "SpringBoard DYLD_INSERT_LIBRARIES=${base:+$base:}$h/libagentsim-ax.dylib:$h/libagentsim-springboard.dylib${AGENT_SIM_SB_EXTRA:+:$AGENT_SIM_SB_EXTRA}$log" >>"$PENV"
 }
 
+# x86Sim starts Darling through a setuid-root launcher. A VM restored from an archive or a disk copy can keep the
+# setuid bit but lose the root owner; x86Sim then falls back to its user-namespace mode, where the phone never came
+# up on these VMs (no Darling processes, no frames). Put the owner back when sudo allows it.
+fix_launcher() {
+	local l
+	for l in "$DATA"/app/"$X86SIM_VERSION"*/darling/bin/darling; do
+		[ -f "$l" ] && [ -u "$l" ] && [ "$(stat -c %u "$l")" != 0 ] || continue
+		if sudo -n chown root:root "$l" 2>/dev/null && sudo -n chmod 4755 "$l"; then
+			echo "phone.sh: gave Darling's launcher back to root ($l)" >&2
+		else
+			echo "phone.sh: Darling's launcher $l is not owned by root; run: sudo chown root:root $l && sudo chmod 4755 $l" >&2
+		fi
+	done
+}
+
 case $ACTION in
 start)
+	fix_launcher
 	stop_phone
 	ensure_penv
 	mkdir -p "$RINGS"
