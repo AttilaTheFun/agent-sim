@@ -149,8 +149,10 @@ def scroll_once(ph):
                    frame_p95_ms=float(fps.group(4)))
     if lat:
         run.update(touch_to_frame_p50_ms=float(lat.group(1)), touch_to_frame_max_ms=float(lat.group(2)))
-    # Settings in front and the list moved: its process was busy and frames came out
-    run["valid"] = cpu.get("Preferences", 0) >= 15 and run.get("frames", 0) >= 40
+    # Settings running and the list moved (a scroll publishes a steady stream of frames). Not its CPU use: with all
+    # of iOS's services running, Settings scrolls at a few percent of a core.
+    code, _ = ph.x86("pidof", "com.apple.Preferences")
+    run["valid"] = code == 0 and run.get("frames", 0) >= 60
     return run
 
 
@@ -191,6 +193,12 @@ def main():
               "device": a.device, "env": extra, "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     if not a.no_boot:
         result["boot"] = boot(ph)
+    # the environment the phone really runs with, so a setting that did not reach it shows
+    out = sh(["systemctl", "--user", "show", f"agent-sim-phone-{a.device}", "-p", "Environment"], env=ph.env)[1]
+    result["phone_env"] = sorted(v for v in out.strip().removeprefix("Environment=").split() if "=" in v)
+    missing = [k for k in extra if not any(v.startswith(k + "=") for v in result["phone_env"])]
+    if missing:
+        print(f"warning: not in the phone's environment: {', '.join(missing)}", file=sys.stderr)
     result["quiet_after_s"], result["quiet_load"] = wait_quiet()
     result["idle_cpu_pct"] = idle(ph)
     result["launch"] = launch(ph, a.runs)

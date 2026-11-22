@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""Check that every app on a running phone opens and draws.
+
+    bench/smoke [--device p] [--wait 8] [--out DIR]
+
+Launches each app on the home screen and dock in turn, waits, takes a screenshot, and checks that the app is still running and that
+the screen shows real content (not black, not a blank single color). Safari also loads a page and gets text typed
+into its address bar. Writes one PNG per app, a contact sheet (sheet.png) and results.json to --out.
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+
+from PIL import Image, ImageDraw
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+
+def run(cmd, env, cwd, timeout=60):
+    r = subprocess.run(cmd, env=env, cwd=cwd, timeout=timeout, capture_output=True, text=True)
+    return r.returncode, (r.stdout + r.stderr).strip()
+
+
+def content(path):
+    """(share of pixels that are not near-black, number of distinct colors in a reduced image)"""
+    im = Image.open(path).convert("RGB").resize((134, 291))
+    px = list(im.getdata())
+    lit = sum(1 for r, g, b in px if r + g + b > 60) / len(px)
+    colors = len(set((r // 16, g // 16, b // 16) for r, g, b in px))
+    return round(lit, 3), colors
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--device", default="p")
+    ap.add_argument("--wait", type=float, default=8)
+    ap.add_argument("--out", default="smoke")
+    a = ap.parse_args()
+    home = os.path.expanduser("~")
+    ver = os.environ.get("X86SIM_VERSION", "0.5.2")
+    x86sim = os.path.join(os.environ.get("AGENT_SIM_HOME", f"{home}/.local/share/agent-sim"), f"x86sim-{ver}", "AppRun")
+    data = os.path.join(os.environ.get("XDG_DATA_HOME", f"{home}/.local/share"), "x86sim")
+    ring = f"{home}/.cache/x86sim/rings/x86sim-a64-{a.device}-simfb.ring"
+    uid = os.getuid()
+    env = dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{uid}", X86SIM_DEVICE=f"{data}/var/device-a64-{a.device}",
+               SIMFB_RING_LINUX=ring)
+    x = lambda *args, **kw: run([x86sim, "x86sim", *args], env, data, **kw)  # noqa: E731
+    os.makedirs(a.out, exist_ok=True)
+
+    code, out = x("listapps", "--json")
+    try:
+        installed = json.loads(out[out.index("{"):])
+    except ValueError:
+        sys.exit(f"smoke: could not list apps:\n{out[:500]}")
+    # the apps a person sees: SpringBoard's home screen and dock (the rest are hidden system screens)
+    import plistlib
+    state = os.path.join(data, "var", f"device-a64-{a.device}", "data/Library/SpringBoard/IconState.plist")
+    visible = []
+
+    def walk(v):
+        if isinstance(v, str) and v in installed and v not in visible:
+            visible.append(v)
+        elif isinstance(v, list):
+            for i in v:
+                walk(i)
+        elif isinstance(v, dict):
+            for i in v.values():
+                walk(i)
+
+    walk(plistlib.load(open(state, "rb")))
+    results = []
+    for bid in visible:
+        name = installed[bid].get("CFBundleDisplayName") or installed[bid].get("CFBundleName") or bid
+        x("home")
+        time.sleep(1.5)
+        t0 = time.time()
+        lcode, lout = x("launch", bid)
+        time.sleep(a.wait)
+        _, pid = x("pidof", bid)
+        shot = os.path.join(a.out, f"{bid}.png")
+        x("screenshot", shot, "2")
+        lit, colors = content(shot) if os.path.exists(shot) else (0, 0)
+        running = pid.strip().isdigit()
+        ok = lcode == 0 and running and lit > 0.05 and colors > 6
+        results.append({"bundle": bid, "name": name, "launched": lcode == 0, "running": running,
+                        "lit": lit, "colors": colors, "ok": ok, "launch_s": round(time.time() - t0, 1),
+                        "error": None if lcode == 0 else lout[-300:]})
+        print(f"{'ok  ' if ok else 'FAIL'} {name:<22} running={running} lit={lit} colors={colors}")
+        x("terminate", bid)
+
+    # Safari: a page over the network, and typing into the address bar
+    x("home")
+    time.sleep(1)
+    x("openurl", "https://example.com")
+    time.sleep(10)
+    x("screenshot", os.path.join(a.out, "safari-page.png"), "2")
+    x("tap", "400", "1690")  # the address bar, at the bottom of a 2x iPhone 17 Pro screen
+    time.sleep(2)
+    x("type", "apple.com")
+    time.sleep(2)
+    x("screenshot", os.path.join(a.out, "safari-typing.png"), "2")
+    x("home")
+
+    # contact sheet
+    shots = [r for r in results if os.path.exists(os.path.join(a.out, r["bundle"] + ".png"))]
+    extra = [p for p in ("safari-page.png", "safari-typing.png") if os.path.exists(os.path.join(a.out, p))]
+    tiles = [(os.path.join(a.out, r["bundle"] + ".png"), r["name"], r["ok"]) for r in shots]
+    tiles += [(os.path.join(a.out, p), p[:-4], True) for p in extra]
+    if tiles:
+        w, h, cols = 201, 437, 6
+        sheet = Image.new("RGB", (cols * w, ((len(tiles) + cols - 1) // cols) * (h + 22)), (24, 24, 28))
+        d = ImageDraw.Draw(sheet)
+        for i, (path, label, ok) in enumerate(tiles):
+            im = Image.open(path).convert("RGB").resize((w - 6, h - 6))
+            cx, cy = (i % cols) * w, (i // cols) * (h + 22)
+            sheet.paste(im, (cx + 3, cy + 3))
+            d.text((cx + 6, cy + h), label[:28], fill=(220, 220, 220) if ok else (255, 110, 110))
+        sheet.save(os.path.join(a.out, "sheet.png"))
+    with open(os.path.join(a.out, "results.json"), "w") as f:
+        json.dump(results, f, indent=1)
+    bad = [r["name"] for r in results if not r["ok"]]
+    print(f"\n{len(results) - len(bad)} of {len(results)} apps open and draw" + (f"; failing: {', '.join(bad)}" if bad else ""))
+
+
+if __name__ == "__main__":
+    main()
