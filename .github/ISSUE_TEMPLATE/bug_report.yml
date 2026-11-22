@@ -1,0 +1,35 @@
+name: Bug report
+description: Something does not work as described
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        agent-sim up
+        agent-sim launch com.example.app
+        agent-sim snapshot
+    validations:
+      required: true
+  - type: textarea
+    id: machine
+    attributes:
+      label: Machine
+      description: Output of `uname -a`, `lscpu | grep "Model name"`, `free -g | head -2` and `agent-sim --version`.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: For an app problem, `agent-sim logs <bundle id>`; for a boot problem, `journalctl --user -u agent-sim-phone-p -n 100`.
+      render: text
