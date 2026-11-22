@@ -14,7 +14,8 @@
 #                             Settings row icon and left them gray)
 #   LP_NUM_THREADS            lavapipe's threads: two fewer than the CPUs, 2 to 6
 #   A64_JOBS=slim             x86Sim's smaller list of background services
-#   AGENT_SIM_EXTRA_JOBS      launchd labels to run on top of that list (space-separated). The default adds back
+#   AGENT_SIM_SERVICES=apps   which services to add to that list (see APPS_JOBS below; =lean for the minimum)
+#   AGENT_SIM_EXTRA_JOBS      launchd labels to run on top of that list instead (space-separated). The lean set adds back
 #                             what slim leaves out but the phone needs: sleepd (without it SpringBoard retries
 #                             reaching it about 780 times a second and keeps more than a core busy at rest), and the
 #                             services Photos, Wallet and Watch need to open (assetsd, passd, financed,
@@ -51,8 +52,33 @@ stop_phone() {
 # the boot environment). WebKit's web content process reserves a 16 GB "Gigacage" at startup; under x86Sim that
 # reservation fails and every page crashes ("Could not allocate gigacage memory"). WebKit's own switch turns it off.
 PENV=${X86SIM_SCRATCH:-$HOME/.cache/x86sim}/a64-penv
-DEFAULT_EXTRA_JOBS="com.apple.sleepd com.apple.assetsd com.apple.passd com.apple.financed com.apple.nanoregistryd
+LEAN_JOBS="com.apple.sleepd com.apple.assetsd com.apple.passd com.apple.financed com.apple.nanoregistryd
 	com.apple.accountsd com.apple.amsaccountsd com.apple.mediaremoted com.apple.sharingd com.apple.medialibraryd"
+# AGENT_SIM_SERVICES=apps (the default): also every service x86Sim's standard list has that only starts when asked
+# for (Spotlight, notifications, pasteboard, contacts, calendars, StoreKit, Siri's, StatusKit...) and locationd, so
+# apps under test find what they find on a device (docs/BENCHMARKS.md has the cost: a few seconds of boot, about
+# 300 MB and 0.2 cores at rest). =lean: only the services the built-in apps need to open.
+APPS_JOBS="
+	com.apple.assetsubscriptiond com.apple.assistant_cdmd
+	com.apple.AuthenticationServicesCore.AuthenticationServicesAgent com.apple.backgroundassets.user
+	com.apple.calaccessd com.apple.campo com.apple.contactsd com.apple.CoreAuthentication.daemon
+	com.apple.corespeechd com.apple.corespotlightservice com.apple.ctkd com.apple.DesktopServicesHelper
+	com.apple.devicecheckd com.apple.devicemanagementclient.managedappsd com.apple.dmd com.apple.DragUI.druid
+	com.apple.FileProvider com.apple.finhealthd com.apple.GameController.gamecontrollerd com.apple.gamed
+	com.apple.gamesaved com.apple.geod com.apple.healthappd com.apple.homed com.apple.installcoordinationd
+	com.apple.linkd com.apple.liveactivitiesd com.apple.LocalAuthenticationUIService com.apple.locationd
+	com.apple.managedappdistributiond com.apple.managedconfiguration.profiled com.apple.Maps.mapssyncd
+	com.apple.mediaanalysisd com.apple.mediaanalysisd.service com.apple.midiserver-sim com.apple.mobileassetd
+	com.apple.nanotimekitcompaniond com.apple.pasteboard.pasted com.apple.PointerUI.pointeruid
+	com.apple.PosterBoard com.apple.quicklook.ThumbnailsAgent com.apple.ScreenTimeAgent com.apple.searchd
+	com.apple.sharinguiservice com.apple.shazamd com.apple.siriactionsd com.apple.siriinferenced
+	com.apple.siriknowledged com.apple.sirittsd com.apple.StatusKitAgent com.apple.storekitd
+	com.apple.syncdefaultsd com.apple.telephonyutilities.callservicesd com.apple.translationd
+	com.apple.UsageTrackingAgent com.apple.usernotificationsd com.apple.videosubscriptionsd com.apple.voiced"
+case ${AGENT_SIM_SERVICES:-apps} in
+lean) DEFAULT_EXTRA_JOBS=$LEAN_JOBS ;;
+*) DEFAULT_EXTRA_JOBS="$LEAN_JOBS $APPS_JOBS" ;;
+esac
 DEFAULT_EXTRA_JOBS=$(echo $DEFAULT_EXTRA_JOBS)
 # agent-sim's own hooks (hooks/, built for the simulator) go into SpringBoard on top of the libraries x86Sim inserts
 # into every process: they dismiss a permission prompt whose app has quit (docs/KNOWN_ISSUES.md).

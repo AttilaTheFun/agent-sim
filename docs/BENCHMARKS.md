@@ -82,6 +82,16 @@ costs nearly nothing, but a phone that is scrolling or animating keeps up to six
 (`LP_NUM_THREADS`); set it lower when many phones animate at once. KSM pays off only with several phones: with one
 it just scans, so `scripts/pool.sh` turns it on when it starts two or more.
 
+## Services for apps under test (Zen 4c EPYC 8224P)
+
+| Services | Boot | CPU at rest | Phone memory |
+|---|---|---|---|
+| `AGENT_SIM_SERVICES=lean`: slim + what the built-in apps need | 19 s | 0.45 cores | 1.2 GB |
+| `apps` (default): + locationd and every on-demand service of x86Sim's standard list | 26–27 s | 0.6 cores | 1.5–1.6 GB |
+
+The first boot with the `apps` set does one-time work (Spotlight indexes the device) and runs busier for a minute or
+two.
+
 ## Shader caches (Zen 4c EPYC 8224P)
 
 Mesa (`~/.cache/mesa_shader_cache`) and metal2vulkan (`~/.cache/metal2vulkan`) keep compiled shaders between boots.

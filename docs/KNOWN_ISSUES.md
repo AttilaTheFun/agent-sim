@@ -12,6 +12,7 @@ x86Sim are reported there with the evidence below.
 | Photos closes at once; Wallet and Watch stay black | services they depend on are not in `slim` | `phone.sh` adds back assetsd, passd, financed, nanoregistryd, accountsd, amsaccountsd, mediaremoted, sharingd and medialibraryd |
 | Pages that start a web worker or service worker crash ("A problem repeatedly occurred") | WebKit asks for a new thread's stack bounds from the creating thread; x86Sim described the child's native stack, not the guest stack it runs on, and JavaScriptCore's `StackBounds::contains` check failed in `sanitizeStackForVM` | `patches/x86sim/0001-guest-stacks-of-new-threads.patch`, built by `scripts/patch-x86sim.sh` during setup |
 | Settings shows gray or blank row icons | Settings finds no rendered icon in the shared icon store and shows a placeholder; the store stays empty because iconservicesagent crashes rendering them: CoreUI force-unwraps `sharedCIContext`, which is nil when the process has no Metal device (x86Sim gives Metal only to the processes named in `X86SIM_METAL`) | `phone.sh` gives iconservicesagent Metal too (`X86SIM_METAL=backboardd,iconservicesagent`). A phone that ran without it keeps the blank icons it cached until its icon store is rebuilt (delete `data/Containers/Shared/SystemGroup/systemgroup.com.apple.lsd.iconscache/Library/Caches/com.apple.IconsCache` with the phone stopped) |
+| Apps never get a location prompt, and other system features they use are missing | x86Sim's `slim` list leaves out locationd and every service that only starts on demand (notifications, pasteboard, Spotlight, contacts, calendars, StoreKit, StatusKit...) | `phone.sh` adds them (`AGENT_SIM_SERVICES=apps`, the default) |
 | News stays black; any app with a crash reporter runs very slowly | An app's `SIGSEGV` handler made Darling replace x86Sim's fault handler, so every routine translator fault (Swift's tagged pointers are non-canonical addresses on x86-64) cost a darlingserver round trip; News' startup spun in Swift string code at a few hundred iterations a second | `patches/x86sim/0002-keep-the-fault-handler-after-guest-sigaction.patch` |
 | A permission prompt stays on screen after the app that asked quits or crashes | Darling delivers a Mach dead-name notification within a process but loses it when the port's owner is another process that died. SpringBoard watches the prompt's reply port for that notification and tccd watches the asking app's connection the same way, so neither noticed | `hooks/springboard.c`, loaded into SpringBoard by `phone.sh`, checks each alert once a second and cancels it when the process that posted it, or the app a permission prompt names, is gone. tccd records the canceled prompt as "denied, prompt canceled" (reason 13); reset with `x86sim privacy reset` |
 | Built-in apps' permission prompts get in the way of other apps | a prompt stays up over every app until answered, as on iOS | `setup-vm.sh` grants the built-in apps their permissions up front, as on a phone that has been set up; apps you install still ask |
@@ -29,9 +30,11 @@ Darling's darlingserver.
 Note that a permission prompt staying over other apps while its app is still running is iOS behavior, not this
 bug: SpringBoard ignores Home while such an alert is up ("an alert item or sheet is showing and can't be dismissed").
 
-### Siri
+### Siri does not open
 
-The Siri app closes when opened directly; x86Sim's own Siri UI runs as `com.apple.campo` instead.
+Neither the Siri app (`com.apple.SiriApp`; launching it returns no process) nor the Siri button brings up Siri's UI,
+with agent-sim's services or x86Sim's standard list: assistantd starts, but the UI (`com.apple.campo`, which
+RunningBoard should start on the Siri request) never does.
 
 ### Maps shows no map tiles
 
