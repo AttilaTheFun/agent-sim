@@ -102,7 +102,8 @@ Work through these in order, benchmarking after each:
    dedicated cores, use huge pages for the translation cache, and measure kernels 6.11+.
 5. **Input latency.** Trace a touch from the socket to the published frame and remove the waits on that path.
    Fixes inside x86Sim go upstream.
-6. **Saved phones.** Snapshot a booted phone and resume it, so a new session does not boot at all.
+6. **Saved phones.** Snapshot a booted phone and resume it, so a new session does not boot at all. Works as a
+   VM memory snapshot on providers that have them: a running phone back in 19 s on Freestyle (docs/BENCHMARKS.md).
 7. **Hardware.** Run the suite on common cloud VM types (for example AMD EPYC Zen 3 and Zen 5) and recommend one.
 
 **Done when** the one-device targets above are met on the recommended VM type.
@@ -147,9 +148,11 @@ and the input commands.
 
 ### Phase 7: More than one device
 
-- Fix what breaks with two phones on one VM (in the first test the second boot froze the first phone's screen, and
-  touch did not reach the second phone).
-- Shared memory across phones, per-phone CPU limits, and the number of phones per VM size.
+- Done: three phones on one 8 vCPU / 16 GB VM, each drawing and taking input through its own `agent-sim serve`
+  while the others boot (the freeze from the first test did not come back); KSM shares memory between them (8.7 GB
+  to 6.8 GB for three); `scripts/pool.sh` keeps phones booted and hands them out.
+- Next: per-phone CPU limits, frame rates with several phones animating at once, and the number of phones per VM
+  size.
 
 ### Phase 8: Hardening
 

@@ -95,6 +95,23 @@ Mesa (`~/.cache/mesa_shader_cache`) and metal2vulkan (`~/.cache/metal2vulkan`) k
 Warm caches save about 10 s a boot. They live under the user's home, so every phone on the machine shares them, and
 `setup-vm.sh`'s first boot fills them. A machine image or snapshot made after setup should keep `~/.cache`.
 
+## Saved phones: VM memory snapshots
+
+A phone cannot be checkpointed on its own (dozens of Darling processes, darlingserver, the Vulkan renderer and
+their shared memory), but a VM provider that snapshots memory saves the whole machine with the phone running.
+On Freestyle (AMD EPYC Milan, 8 vCPU / 16 GB), after a clean `setup-vm.sh` and a booted phone:
+
+| | Time |
+|---|---|
+| Snapshot of the running VM | 3.8 s |
+| New VM from the snapshot, first time | 78 s |
+| New VM from the snapshot, again | **19 s** |
+| Restored phone answers a launch (first new frame) | 2.0–2.5 s |
+
+The restored phone was the same running phone (the VM's uptime carried on, no boot), and opened Settings with
+its icons drawn. Compare a fresh VM: about half an hour of setup, then a boot. Boat's archive and resume keeps
+the disk but not memory: the phone boots again, and the resumed VM can land on a different CPU.
+
 ## Streaming (`agent-sim serve`)
 
 `agent-sim encode-bench` times the browser stream on synthetic scrolling frames (and scores quality by decoding
