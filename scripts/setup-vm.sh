@@ -27,7 +27,7 @@ die() { printf 'setup-vm.sh: %s\n' "$*" >&2; exit 1; }
 
 log "Checking the machine"
 [ "$(uname -m)" = x86_64 ] || die "x86Sim needs an x86-64 machine"
-glibc=$(ldd --version | head -1 | grep -oE '[0-9]+\.[0-9]+$')
+glibc=$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+$')
 awk "BEGIN{exit !($glibc >= 2.39)}" || die "x86Sim needs glibc 2.39 or newer (Ubuntu 24.04+), found $glibc"
 free_gb=$(df -BG --output=avail "$HOME" | tail -1 | tr -dc 0-9)
 [ "$free_gb" -ge 45 ] || [ -d "$DATA/runtimes" ] || die "need 45 GB free in $HOME for the runtime, have ${free_gb} GB"

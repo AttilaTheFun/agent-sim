@@ -26,6 +26,15 @@ if [ "${1:-}" = restore ]; then
 	exit 0
 fi
 
+installed() {  # every copy already holds a build of exactly these patches
+	[ -f "$BUILD/patches.sha" ] && [ "$(cat "$PATCHES"/*.patch | sha256sum)" = "$(cat "$BUILD/patches.sha")" ] || return 1
+	for lib in "${LIBS[@]}"; do cmp -s "$BUILD/libarm64jit.so" "$lib" || return 1; done
+}
+if installed; then
+	echo "patch-x86sim.sh: the patched translator is already installed"
+	exit 0
+fi
+
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -yqq clang cmake ninja-build git libboost-dev >/dev/null
 if [ ! -d "$SRC/.git" ]; then
 	git clone -q --depth 1 --branch "v$X86SIM_VERSION" https://github.com/x86sim/x86sim.git "$SRC"
@@ -39,6 +48,7 @@ for p in "$PATCHES"/*.patch; do git -C "$SRC" apply "$p"; done
 [ -f "$BUILD/build.ninja" ] || cmake -S "$SRC/linux/arm64jit" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release \
 	-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ >/dev/null
 nice ninja -C "$BUILD" -j"$(nproc)" arm64jit >/dev/null
+cat "$PATCHES"/*.patch | sha256sum >"$BUILD/patches.sha"
 # replaced by rename: running phones keep the library they loaded until they restart
 for lib in "${LIBS[@]}"; do
 	[ -e "$lib.orig" ] || cp "$lib" "$lib.orig"

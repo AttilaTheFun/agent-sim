@@ -18,8 +18,21 @@ scripts/phone.sh start && scripts/phone.sh wait
 ```
 
 The setup downloads x86Sim and Apple's iOS 27.2 runtime (about 8 GB, from Apple), creates an iPhone 17 Pro drawn at
-2x, and pre-translates the runtime. It takes about half an hour once; after that a phone boots in about 40 seconds.
+2x, builds x86Sim's translator with the fixes in [patches/x86sim](patches/x86sim), and pre-translates the runtime.
+It takes about half an hour once; after that a phone boots in 12–30 seconds, depending on the CPU.
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md) has the measurements behind these choices.
+
+## Keep phones ready
+
+```sh
+scripts/pool.sh up 3        # prepare and boot pool1..pool3
+phone=$(scripts/pool.sh take)
+# ... use $phone ...
+scripts/pool.sh release "$phone"   # restarts it in the background for the next taker
+```
+
+An agent gets a phone already at its home screen. With two or more, phones share memory through the kernel's KSM:
+three use 6.8 GB together instead of 8.7 GB.
 
 ## Watch a phone in the browser
 
