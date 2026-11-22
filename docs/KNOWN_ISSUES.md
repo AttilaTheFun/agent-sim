@@ -33,12 +33,13 @@ Darling's darlingserver.
 Note that a permission prompt staying over other apps while its app is still running is iOS behavior, not this
 bug: SpringBoard ignores Home while such an alert is up ("an alert item or sheet is showing and can't be dismissed").
 
-### Idle processes respond slowly
+### `snapshot` is slow while the phone is busy
 
-A process with nothing to do (a WebContent process behind a web page, an idle SpringBoard) can take seconds to run
-work queued for its main thread or to handle a signal. `snapshot` waits for it, so on a busy phone or a web page that
-has just changed it takes several seconds. Measured, not yet explained: the next item to look into in Darling and
-x86Sim (docs/PARITY.md).
+Once the phone has settled, a snapshot takes 35 ms on the home screen, 60 ms in Settings and about half a second on a
+long web page (Zen 5). Right after a boot or while a page loads, the phone keeps every core busy (load 10-12 on 8
+vCPUs) and the app answers in seconds; the first walk of an app also translates accessibility code on first use.
+Measured inside the processes: an idle process wakes in under a millisecond, so this is CPU time, not a wake-up
+problem. `snapshot` waits up to 10 s for the app (8 s for web content) rather than leave it out.
 
 ### A pre-translation pass can fail
 

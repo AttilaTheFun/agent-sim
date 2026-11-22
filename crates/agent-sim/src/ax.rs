@@ -119,9 +119,25 @@ fn wait_for(path: &Path, timeout: Duration) -> Result<String> {
 }
 
 /// Asks one process for its elements: `name` is the file it writes (ax-<pid>.json, SpringBoard ax-springboard.json).
+/// Unix time in ms, written into a request so the hook can report how long the request waited.
+fn sent_stamp() -> String {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{:.0}", t.as_secs_f64() * 1e3)
+}
+
 fn dump(dir: &Path, linux_pid: u32, name: &str, timeout: Duration) -> Result<RawDump> {
     let file = dir.join(name);
     let _ = std::fs::remove_file(&file);
+    if let Some(p) = name
+        .strip_prefix("ax-")
+        .and_then(|n| n.strip_suffix(".json"))
+    {
+        if p.parse::<u32>().is_ok() {
+            let _ = std::fs::write(dir.join(format!("req-{p}")), sent_stamp());
+        }
+    }
     phone::signal(linux_pid, libc::SIGUSR2)?;
     let text = wait_for(&file, timeout)?;
     serde_json::from_str(&text).with_context(|| format!("reading {}", file.display()))
@@ -133,7 +149,7 @@ fn web_windows(dev: &Device, dir: &Path, webviews: &[[f64; 4]]) -> Vec<RawWindow
         return Vec::new();
     };
     // a page still loading or zooming moves under the reading: read again until two readings agree
-    let (mut last, mut live) = read_web(dir, &procs, webviews, Duration::from_secs(4));
+    let (mut last, mut live) = read_web(dir, &procs, webviews, Duration::from_secs(8));
     for _ in 0..3 {
         if live.is_empty() {
             break;
@@ -176,7 +192,7 @@ fn read_web(
     let before: Vec<_> = procs.iter().map(|&(_, i)| stamp(i)).collect();
     for &(linux, inner) in procs {
         // the hook's watcher thread picks this up within 150 ms; the signal is the fast path when it gets through
-        let _ = std::fs::write(dir.join(format!("req-{inner}")), b"");
+        let _ = std::fs::write(dir.join(format!("req-{inner}")), sent_stamp());
         let _ = phone::signal(linux, libc::SIGUSR2);
     }
     let mut pending: Vec<usize> = (0..procs.len()).collect();

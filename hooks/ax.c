@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 #include <sys/stat.h>
 
 typedef struct { double x, y, w, h; } Rect;
@@ -118,8 +119,29 @@ static void emit(id e) {
 static Rect g_webviews[16];
 static int g_nwebviews;
 
+static long g_visits;  // objects walked in the current dump (reported with its time)
+static double g_sent;  // when the CLI asked (Unix ms, from req-<pid>), to report how long the request waited
+static double unix_ms(void) {
+	struct timespec t;
+	clock_gettime(CLOCK_REALTIME, &t);
+	return t.tv_sec * 1e3 + t.tv_nsec / 1e6;
+}
+static void read_sent(const char *path) {
+	FILE *f = fopen(path, "r");
+	if (!f) return;
+	double v = 0;
+	if (fscanf(f, "%lf", &v) == 1) g_sent = v;
+	fclose(f);
+}
+static double ms_now(void) {
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return t.tv_sec * 1e3 + t.tv_nsec / 1e6;
+}
+
 static void walk(id o, int depth) {
 	if (!o || depth > 60 || emitted > 2000) return;
+	g_visits++;
 	if (getb(o, "accessibilityElementsHidden")) return;
 	if (kind(o, "UIView") && (getb(o, "isHidden") || getd(o, "alpha") < 0.01)) return;
 	if (g_nwebviews < 16 && kind(o, "WKWebView")) {
@@ -310,6 +332,9 @@ static void dump_web(void) {
 	else dump_web_now(NULL);
 }
 static void dump_web_now(void *ctx) {
+	double t0 = ms_now(), waited = g_sent > 0 ? unix_ms() - g_sent : -1;
+	g_sent = 0;
+	g_visits = 0;
 	len = 0;
 	char head[256];
 	snprintf(head, sizeof head, "{\"pid\":%d,\"process\":\"WebContent\",\"windows\":[", getpid());
@@ -326,7 +351,7 @@ static void dump_web_now(void *ctx) {
 		walk(root, 0);
 		puts_("]}");
 	}
-	puts_("]}\n");
+	putf("],\"ms\":%.0f,\"visits\":%.0f,\"waited\":%.0f}\n", ms_now() - t0, g_visits, waited, 0);
 	char name[64];
 	snprintf(name, sizeof name, "ax-%d.json", getpid());
 	write_file(name, buf, len);
@@ -374,6 +399,13 @@ static void dump(void *ctx) {
 		dump_web();
 		return;
 	}
+	char rq[1200];
+	snprintf(rq, sizeof rq, "%s/req-%d", dir, getpid());
+	read_sent(rq);
+	unlink(rq);
+	double t0 = ms_now(), waited = g_sent > 0 ? unix_ms() - g_sent : -1;
+	g_sent = 0;
+	g_visits = 0;
 	id app = SEND(id, (id)objc_getClass("UIApplication"), "sharedApplication")((id)objc_getClass("UIApplication"), SEL_("sharedApplication"));
 	char head[256];
 	snprintf(head, sizeof head, "{\"pid\":%d,\"process\":\"%s\",\"windows\":[", getpid(), getprogname());
@@ -391,7 +423,7 @@ static void dump(void *ctx) {
 		walk(win, 0);
 		puts_("]}");
 	}
-	puts_("],\"webviews\":[");
+	putf("],\"ms\":%.0f,\"visits\":%.0f,\"waited\":%.0f,\"webviews\":[", ms_now() - t0, g_visits, waited, 0);
 	for (int i = 0; i < g_nwebviews; i++)
 	{
 		char t[160];
@@ -437,6 +469,7 @@ static void *watch_requests(void *arg) {
 	for (;;) {
 		usleep(150000);
 		if (access(path, F_OK) != 0) continue;
+		read_sent(path);
 		unlink(path);
 		if (get_main && perform && wake && common) {
 			void *rl = get_main();

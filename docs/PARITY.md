@@ -24,8 +24,8 @@ So differences come in three kinds, and each is handled differently:
 1. **Emulation gaps**: a re-implemented layer behaves differently from the real one in some case iOS relies on. These
    are bugs to find and fix in x86Sim or Darling (patches/x86sim) or to work around inside the phone (hooks/).
    Examples found so far: thread stack queries from another thread (web workers crashed), a fault handler replaced
-   by an app's crash reporter (apps crawled), lost "port died" notifications (stale permission prompts), and an idle
-   process waking slowly.
+   by an app's crash reporter (apps crawled), lost "port died" notifications (stale permission prompts), and a lost
+   root owner on Darling's launcher after a VM restore (no boot).
 2. **Missing features**: what CoreSimulator and SimulatorBridge provide on a Mac and nobody had built here
    (dark mode, status bar overrides, the clipboard...). These are agent-sim commands.
 3. **Trade-offs**: agent-sim's defaults trade some fidelity for speed (2x rendering, reduced effects). These become
@@ -97,14 +97,12 @@ Status: **same** as on a Mac, **close** (works, with a noted difference), **gap*
 | Scrolling | 60–120 fps | about 55 fps on Zen 5 |
 | Touch to screen | a frame or two | about 14 ms on Zen 5 |
 | Rendering | 3x, all effects | 2x with Reduce Transparency and Reduce Motion by default |
-| `snapshot` | (none) | under a second on an active screen; seconds when the phone is busy or a web page has just changed |
+| `snapshot` | (none) | 35 ms home screen, 60 ms Settings, about 0.5 s a long web page (settled, Zen 5); seconds while the phone is busy |
 
 ## Next, in order
 
-1. Speed of an idle process to respond (signals and main-thread work arrive late; it slows `snapshot` on web pages
-   and is likely to show elsewhere): find the cause in Darling or x86Sim.
-2. A fidelity option: 3x and full effects, measured, for screenshots that must match a Mac's.
-3. The software keyboard (show it as Cmd-K does on a Mac), and status bar signal bars.
-4. XCTest and XCUITest runs, so existing UI test suites run unchanged.
-5. A debugger story (lldb, Web Inspector).
-6. Siri, and device cloning.
+1. A fidelity option: 3x and full effects, measured, for screenshots that must match a Mac's.
+2. The software keyboard (show it as Cmd-K does on a Mac), and status bar signal bars.
+3. XCTest and XCUITest runs, so existing UI test suites run unchanged.
+4. A debugger story (lldb, Web Inspector).
+5. Siri, Maps tiles (x86Sim's `fetch-macos-host.sh` provides the map data from a Mac), and device cloning.
