@@ -64,8 +64,13 @@ agent-sim press home
 agent-sim open https://example.com
 ```
 
-`snapshot` reads the accessibility tree of the app in front and of SpringBoard, so system alerts, the home screen
-and the status bar are in it too. Every command takes `--device NAME`; `agent-sim --help` lists them all.
+`snapshot` reads the accessibility tree of the app in front, the web pages it shows, and SpringBoard, so system
+alerts, the home screen and the status bar are in it too. Every command takes `--device NAME`; `agent-sim --help`
+lists them all.
+
+The simulator controls Apple's `simctl` has are here too: `appearance dark`, `status-bar --time 9:41`, `clipboard`,
+`record -o video.mp4`, `erase`, `logs`, plus x86Sim's `location`, `push`, `privacy` and `addmedia`.
+[docs/PARITY.md](docs/PARITY.md) compares every feature with Apple's Simulator on a Mac.
 
 Device builds run when they are not encrypted. App Store downloads are (FairPlay), so use an Ad Hoc, Development or
 Enterprise export, or build for the simulator.
@@ -111,6 +116,7 @@ metal2vulkan. agent-sim builds the agent-facing product on top of it:
 
 ## Documentation
 
+- [docs/PARITY.md](docs/PARITY.md): feature by feature against Apple's Simulator on a Mac
 - [docs/BENCHMARKS.md](docs/BENCHMARKS.md): speed, memory, several phones, snapshots
 - [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md): what does not work yet and why
 - [docs/ROADMAP.md](docs/ROADMAP.md): what comes next
