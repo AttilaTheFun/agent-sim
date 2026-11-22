@@ -46,17 +46,6 @@ for _ in $(seq 20); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 0.5; done
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
 export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
 
-log "Letting the kernel merge identical memory pages between phones (KSM)"
-# Phones run the same iOS runtime: with KSM three phones use 6.8 GB instead of 8.7 GB (docs/BENCHMARKS.md).
-# phone.sh opts each phone in (MemoryKSM=yes); this turns the merging on, now and at every boot.
-if [ -e /sys/kernel/mm/ksm/run ]; then
-	printf 'w /sys/kernel/mm/ksm/run - - - - 1\nw /sys/kernel/mm/ksm/pages_to_scan - - - - 1000\n' |
-		sudo tee /etc/tmpfiles.d/agent-sim-ksm.conf >/dev/null
-	sudo systemd-tmpfiles --create /etc/tmpfiles.d/agent-sim-ksm.conf
-else
-	echo "setup-vm.sh: this kernel has no KSM; phones will not share memory" >&2
-fi
-
 if [ ! -x "$X" ]; then
 	log "Downloading x86Sim $X86SIM_VERSION"
 	tmp=$(mktemp -d)

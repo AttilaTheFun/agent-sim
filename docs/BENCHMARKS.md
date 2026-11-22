@@ -59,7 +59,7 @@ bound. Per core speed matters most: the same 8 vCPUs on Zen 5 boot a new phone 3
 Adding back `com.apple.sleepd` matters most for the last row. Without it SpringBoard keeps retrying and about 1.3 cores
 stay busy with nothing on screen, which also slowed touches. With it the phone is idle at rest.
 
-## Several phones on one VM (Zen 5, 8 vCPU / 16 GB)
+## Several phones on one VM (Zen 4c EPYC 8224P, 8 vCPU / 16 GB)
 
 Three phones booted one after another; each one was checked to still draw by opening Settings after every boot.
 
@@ -70,11 +70,17 @@ Three phones booted one after another; each one was checked to still draw by ope
 | Three phones, 2 min after the last boot | **8.7 GB** | **6.8 GB** (2.2 GB of pages merged) |
 | Load average, three phones at rest | 1.0 | 1.5 (KSM's own scanning) |
 | Boot with other phones running | 29–32 s | 29–32 s |
+| One phone at rest: CPU | 0.2–0.4 cores | 0.7 cores (about 0.4 of it is KSM scanning) |
+
+This ran on a slower CPU than the tables above: the same VM, resumed, came back on an EPYC 8224P (Zen 4c), where one
+phone boots in 25–31 s instead of 12–13 s on Zen 5. Memory does not depend on the CPU. Check `lscpu` before comparing
+numbers across runs; a cloud provider may place the same VM type on different hardware.
 
 Every phone kept drawing while the others booted. One phone needs about 2.3 GB on its own and about 1.7 GB with
 KSM, so memory allows six phones on a 16 GB VM and about twelve on 32 GB. CPU sets the real limit: a phone at rest
 costs nearly nothing, but a phone that is scrolling or animating keeps up to six drawing threads busy
-(`LP_NUM_THREADS`); set it lower when many phones animate at once.
+(`LP_NUM_THREADS`); set it lower when many phones animate at once. KSM pays off only with several phones: with one
+it just scans, so `scripts/pool.sh` turns it on when it starts two or more.
 
 ## Streaming (`agent-sim serve`)
 

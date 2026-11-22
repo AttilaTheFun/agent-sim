@@ -7,7 +7,11 @@
 #   scripts/phone.sh status [DEVICE]
 #
 # Settings, each overridable from the environment (docs/BENCHMARKS.md has the measurements):
-#   X86SIM_METAL=backboardd   Metal on Mesa's CPU Vulkan driver (lavapipe): smoother scrolling than software drawing
+#   X86SIM_METAL=backboardd,iconservicesagent
+#                             Metal on Mesa's CPU Vulkan driver (lavapipe) for these processes: backboardd draws the
+#                             screen (smoother scrolling than software drawing); iconservicesagent renders icons with
+#                             Core Image, which has no context without a Metal device (the agent crashed on every
+#                             Settings row icon and left them gray)
 #   LP_NUM_THREADS            lavapipe's threads: two fewer than the CPUs, 2 to 6
 #   A64_JOBS=slim             x86Sim's smaller list of background services
 #   AGENT_SIM_EXTRA_JOBS      launchd labels to run on top of that list (space-separated). The default adds back
@@ -15,7 +19,7 @@
 #                             reaching it about 780 times a second and keeps more than a core busy at rest), and the
 #                             services Photos, Wallet and Watch need to open (assetsd, passd, financed,
 #                             nanoregistryd, accounts, media).
-#   AGENT_SIM_KSM=1           share identical memory pages with other phones (KSM)
+#   AGENT_SIM_KSM=1           share identical memory pages with other phones (KSM, when the kernel's is on)
 # The frame ring lives under ~/.cache rather than /run/user: x86Sim's container does not always see the host's
 # /run/user (no login session on a server), and then no frame ever reaches the host.
 set -Eeuo pipefail
@@ -70,12 +74,12 @@ start)
 		X86SIM_* | A64_* | LP_* | VK_* | MESA_* | SIMFB_*) passthrough+=(--setenv="$name") ;;
 		esac
 	done < <(env)
-	# let the kernel merge this phone's memory pages with identical ones of other phones (KSM, which setup-vm.sh turns
-	# on; AGENT_SIM_KSM=0 opts out)
+	# let the kernel merge this phone's memory pages with identical ones of other phones (KSM; takes effect while
+	# /sys/kernel/mm/ksm/run is 1, which pool.sh sets for two or more phones; AGENT_SIM_KSM=0 opts out)
 	[ "${AGENT_SIM_KSM:-1}" = 1 ] && passthrough+=(--property=MemoryKSM=yes)
 	systemd-run --user --quiet --unit="$UNIT" --collect "${passthrough[@]}" \
 		--setenv=SIMFB_RING="/Volumes/SystemRoot$RING" \
-		--setenv=X86SIM_METAL="${X86SIM_METAL:-backboardd}" \
+		--setenv=X86SIM_METAL="${X86SIM_METAL:-backboardd,iconservicesagent}" \
 		--setenv=LP_NUM_THREADS="${LP_NUM_THREADS:-$(n=$(($(nproc) - 2)); echo $((n < 2 ? 2 : n > 6 ? 6 : n)))}" \
 		--setenv=A64_JOBS="${A64_JOBS:-slim}" \
 		--setenv=VK_ICD_FILENAMES="${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json}" \
