@@ -109,6 +109,8 @@ start)
 	mkdir -p "$RINGS"
 	# a ring left from the last boot would look like a home screen already drawn
 	rm -f "$RING" "$RING".* "$DIR/data/framebuffer.bgra"
+	# answers the hooks wrote for the last boot's processes
+	rm -rf "$DIR/data/tmp/agent-sim"
 	# x86Sim's, lavapipe's and Vulkan's own settings from this environment reach the phone too
 	passthrough=()
 	while IFS='=' read -r name _; do

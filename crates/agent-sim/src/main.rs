@@ -110,6 +110,25 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
+    /// Light or dark mode.
+    Appearance {
+        #[arg(value_parser = ["light", "dark"])]
+        mode: String,
+    },
+    /// The phone's clipboard: print it, or set it to TEXT.
+    Clipboard { text: Option<String> },
+    /// Record the screen to an MP4.
+    Record {
+        #[arg(short, long, default_value = "recording.mp4")]
+        out: PathBuf,
+        /// Seconds.
+        #[arg(long, default_value_t = 10.0)]
+        secs: f64,
+        #[arg(long, default_value_t = 30)]
+        fps: u32,
+    },
+    /// Start the phone over: apps, data and settings gone (as `simctl erase`).
+    Erase,
     /// Open a URL (web pages in Safari, or an app's deep link).
     Open { url: String },
     /// Wait until text is on screen (or, with --gone, no longer is).
@@ -191,6 +210,15 @@ fn main() -> Result<()> {
         }
         Command::Mcp => mcp::run(&name),
         Command::Up => cmd::up(&name),
+        Command::Erase => cmd::erase(&name),
+        Command::Appearance { mode } => say(cmd::appearance(&dev()?, &mode)),
+        Command::Clipboard { text } => say(cmd::clipboard(&dev()?, text.as_deref())),
+        Command::Record { out, secs, fps } => say(cmd::record(
+            &dev()?,
+            &out,
+            secs.clamp(0.1, 3600.0),
+            fps.clamp(1, 60),
+        )),
         Command::Down => cmd::down(&name),
         Command::Status => cmd::status(),
         Command::Snapshot { json } => say(cmd::snapshot(&dev()?, json)),

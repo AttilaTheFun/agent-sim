@@ -224,6 +224,14 @@ fn call(default_device: &str, name: &str, args: &Value) -> Result<Value> {
             then_snapshot(&dev, done)
         }
         "terminate" => text(cmd::terminate(&dev, s(args, "bundle_id")?)?),
+        "appearance" => {
+            let done = cmd::appearance(&dev, s(args, "mode")?)?;
+            then_snapshot(&dev, done)
+        }
+        "clipboard" => text(cmd::clipboard(
+            &dev,
+            args.get("text").and_then(Value::as_str),
+        )?),
         "logs" => text(cmd::logs(
             &dev,
             s(args, "bundle_id")?,

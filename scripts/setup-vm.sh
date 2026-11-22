@@ -36,7 +36,7 @@ free_gb=$(df -BG --output=avail "$HOME" | tail -1 | tr -dc 0-9)
 log "Installing packages"
 sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -yqq \
-	python3 python3-pil python3-dnspython curl openssl jq mesa-vulkan-drivers >/dev/null
+	python3 python3-pil python3-dnspython curl openssl jq mesa-vulkan-drivers ffmpeg >/dev/null
 
 log "Keeping a user session for x86Sim's sockets and services"
 # x86Sim puts sockets under /run/user/<uid> and runs phones as user services; without a login session (a server

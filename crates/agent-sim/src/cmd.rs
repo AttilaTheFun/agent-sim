@@ -50,22 +50,68 @@ pub fn status() -> Result<()> {
     Ok(())
 }
 
+/// How the phone is turned (x86Sim's orientation): portrait, landscapeLeft, landscapeRight, portraitUpsideDown.
+fn orientation(dev: &Device) -> String {
+    phone::x86sim_ok(dev, &["orientation"])
+        .map(|o| o.trim().to_string())
+        .unwrap_or_else(|_| "portrait".into())
+}
+
+/// The screen as a PNG, upright as the user sees it: turned with the phone, as Apple's Simulator turns its window.
 pub fn screenshot_png(dev: &Device) -> Result<Vec<u8>> {
     let mut ring = Ring::new(&dev.ring_path()?);
     let frame = ring
         .latest()
         .context("no frame yet: is the phone running?")?;
-    let mut png_bytes = Vec::new();
-    let mut enc = png::Encoder::new(&mut png_bytes, frame.width as u32, frame.height as u32);
-    enc.set_color(png::ColorType::Rgb);
-    enc.set_depth(png::BitDepth::Eight);
-    enc.set_compression(png::Compression::Fast);
-    let mut rgb = Vec::with_capacity(frame.width * frame.height * 3);
+    let (w, h) = (frame.width, frame.height);
+    let mut rgb = Vec::with_capacity(w * h * 3);
     for px in frame.bgra.chunks_exact(4) {
         rgb.extend_from_slice(&[px[2], px[1], px[0]]);
     }
+    let (rgb, w, h) = rotate(rgb, w, h, &orientation(dev));
+    let mut png_bytes = Vec::new();
+    let mut enc = png::Encoder::new(&mut png_bytes, w as u32, h as u32);
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.set_compression(png::Compression::Fast);
     enc.write_header()?.write_image_data(&rgb)?;
     Ok(png_bytes)
+}
+
+/// Turns an RGB image so a landscape or upside-down screen reads upright.
+fn rotate(src: Vec<u8>, w: usize, h: usize, orientation: &str) -> (Vec<u8>, usize, usize) {
+    let px = |x: usize, y: usize| &src[(y * w + x) * 3..(y * w + x) * 3 + 3];
+    match orientation {
+        // the content's top is at the framebuffer's right edge: turn it a quarter to the left
+        "landscapeLeft" => {
+            let mut out = Vec::with_capacity(src.len());
+            for y in 0..w {
+                for x in 0..h {
+                    out.extend_from_slice(px(w - 1 - y, x));
+                }
+            }
+            (out, h, w)
+        }
+        "landscapeRight" => {
+            let mut out = Vec::with_capacity(src.len());
+            for y in 0..w {
+                for x in 0..h {
+                    out.extend_from_slice(px(y, h - 1 - x));
+                }
+            }
+            (out, h, w)
+        }
+        "portraitUpsideDown" => {
+            let mut out = Vec::with_capacity(src.len());
+            for y in 0..h {
+                for x in 0..w {
+                    out.extend_from_slice(px(w - 1 - x, h - 1 - y));
+                }
+            }
+            (out, w, h)
+        }
+        _ => (src, w, h),
+    }
 }
 
 pub fn screenshot(dev: &Device, out: Option<PathBuf>) -> Result<String> {
@@ -393,4 +439,185 @@ pub fn logs(dev: &Device, bundle: &str, lines: usize, matching: Option<&str>) ->
         ));
     }
     Ok(out)
+}
+
+/// The iOS runtime's root (its /usr/bin tools run inside the phone through `x86sim spawn`).
+fn runtime_root() -> Result<PathBuf> {
+    let base = crate::device::data_dir()?.join("runtimes");
+    for rt in std::fs::read_dir(&base)?.flatten() {
+        let profiles = rt
+            .path()
+            .join("extracted/Library/Developer/CoreSimulator/Profiles/Runtimes");
+        for sim in std::fs::read_dir(&profiles).into_iter().flatten().flatten() {
+            let root = sim.path().join("Contents/Resources/RuntimeRoot");
+            if root.join("usr/bin/defaults").is_file() {
+                return Ok(root);
+            }
+        }
+    }
+    bail!("no iOS runtime under {}", base.display())
+}
+
+/// Light or dark mode, as `simctl ui appearance` sets it: UIKit's style preference, then its change notification.
+pub fn appearance(dev: &Device, mode: &str) -> Result<String> {
+    let v = match mode {
+        "light" => "1",
+        "dark" => "2",
+        _ => bail!("appearance light or dark"),
+    };
+    let rt = runtime_root()?;
+    let defaults = rt.join("usr/bin/defaults");
+    let notify = rt.join("usr/bin/notifyutil");
+    phone::x86sim_ok(
+        dev,
+        &[
+            "spawn",
+            &defaults.to_string_lossy(),
+            "write",
+            "com.apple.uikitservices.userInterfaceStyleMode",
+            "UserInterfaceStyleMode",
+            "-int",
+            v,
+        ],
+    )?;
+    phone::x86sim_ok(
+        dev,
+        &[
+            "spawn",
+            &notify.to_string_lossy(),
+            "-p",
+            "com.apple.uikitservices.userInterfaceStyleMode.changed",
+        ],
+    )?;
+    Ok(format!("appearance {mode}"))
+}
+
+/// The general pasteboard, through SpringBoard (a background process may not read it): `None` reads it.
+pub fn clipboard(dev: &Device, set: Option<&str>) -> Result<String> {
+    let dir = phone::data_dir(dev).join("tmp/agent-sim");
+    std::fs::create_dir_all(&dir)?;
+    let answer = dir.join("pasteboard.txt");
+    let _ = std::fs::remove_file(&answer);
+    let req = match set {
+        Some(t) => format!("pasteboard-set\n{t}"),
+        None => "pasteboard-get".to_string(),
+    };
+    std::fs::write(dir.join("cmd.txt"), req)?;
+    let sb = phone::processes(dev, |_, exe| exe == "SpringBoard")?;
+    phone::signal(
+        *sb.first().context("the phone is not running")?,
+        libc::SIGUSR2,
+    )?;
+    let start = Instant::now();
+    loop {
+        if let Ok(t) = std::fs::read_to_string(&answer) {
+            return Ok(match set {
+                Some(_) => "clipboard set".to_string(),
+                None => t,
+            });
+        }
+        // the first read after a boot waits for the pasteboard service to start
+        if start.elapsed() > Duration::from_secs(15) {
+            bail!("no answer from SpringBoard (are agent-sim's hooks loaded?)");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// A fresh phone under the same name: its apps, data and settings gone, as `simctl erase`.
+pub fn erase(name: &str) -> Result<()> {
+    let dir = crate::device::data_dir()?
+        .join("var")
+        .join(format!("device-a64-{name}"));
+    if !dir.is_dir() {
+        bail!("no phone named {name}");
+    }
+    let _ = phone::script("phone.sh", &["stop", name], &[]);
+    std::fs::remove_dir_all(&dir).with_context(|| format!("removing {}", dir.display()))?;
+    phone::script("setup-vm.sh", &[], &[("DEVICE", name)])
+}
+
+/// Records the screen to an MP4 (H.264) with ffmpeg, as `simctl io recordVideo`: `secs` long, at `fps`.
+pub fn record(dev: &Device, out: &Path, secs: f64, fps: u32) -> Result<String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut ring = Ring::new(&dev.ring_path()?);
+    let first = ring
+        .latest()
+        .context("no frame yet: is the phone running?")?;
+    let (w, h) = (first.width, first.height);
+    let mut ff = Command::new("ffmpeg")
+        .args([
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "bgra",
+            "-s",
+        ])
+        .arg(format!("{w}x{h}"))
+        .args([
+            "-r",
+            &fps.to_string(),
+            "-i",
+            "-",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+        ])
+        .args(["-pix_fmt", "yuv420p", "-movflags", "+faststart"])
+        .arg(out)
+        .stdin(Stdio::piped())
+        .spawn()
+        .context("running ffmpeg (sudo apt install ffmpeg)")?;
+    let mut stdin = ff.stdin.take().unwrap();
+    let period = Duration::from_secs_f64(1.0 / fps.max(1) as f64);
+    let total = (secs * fps as f64).ceil() as u64;
+    let start = Instant::now();
+    let mut last = first.bgra;
+    for i in 0..total {
+        if let Some(f) = ring.latest()
+            && f.width == w
+            && f.height == h
+        {
+            last = f.bgra;
+        }
+        stdin.write_all(&last)?;
+        let next = period * (i as u32 + 1);
+        if let Some(wait) = next.checked_sub(start.elapsed()) {
+            std::thread::sleep(wait);
+        }
+    }
+    drop(stdin);
+    if !ff.wait()?.success() {
+        bail!("ffmpeg failed");
+    }
+    Ok(format!("{} ({secs:.1} s at {fps} fps)", out.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rotate;
+
+    // a 2x1 image (red, green) turned each way
+    #[test]
+    fn rotation_keeps_the_content_upright() {
+        let img = vec![255, 0, 0, 0, 255, 0];
+        assert_eq!(rotate(img.clone(), 2, 1, "portrait"), (img.clone(), 2, 1));
+        assert_eq!(
+            rotate(img.clone(), 2, 1, "landscapeLeft"),
+            (vec![0, 255, 0, 255, 0, 0], 1, 2)
+        );
+        assert_eq!(
+            rotate(img.clone(), 2, 1, "landscapeRight"),
+            (vec![255, 0, 0, 0, 255, 0], 1, 2)
+        );
+        assert_eq!(
+            rotate(img, 2, 1, "portraitUpsideDown"),
+            (vec![0, 255, 0, 255, 0, 0], 2, 1)
+        );
+    }
 }

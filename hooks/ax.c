@@ -167,7 +167,34 @@ static void write_front(void) {
 	write_file("front.json", out, strlen(out));
 }
 
+// SpringBoard: requests agent-sim leaves in cmd.txt before the signal ("pasteboard-get", or "pasteboard-set" and the
+// text on the following lines); the answer goes to pasteboard.txt. SpringBoard may read the pasteboard at any time;
+// a background process may not.
+static void pasteboard_request(void) {
+	char path[1200];
+	snprintf(path, sizeof path, "%s/cmd.txt", dir);
+	FILE *f = fopen(path, "r");
+	if (!f) return;
+	static char req[65536];
+	size_t n = fread(req, 1, sizeof req - 1, f);
+	fclose(f);
+	unlink(path);
+	req[n] = 0;
+	id pb = SEND(id, (id)objc_getClass("UIPasteboard"), "generalPasteboard")((id)objc_getClass("UIPasteboard"), SEL_("generalPasteboard"));
+	if (!pb) return;
+	if (!strncmp(req, "pasteboard-set\n", 15)) {
+		id str = SEND(id, (id)objc_getClass("NSString"), "stringWithUTF8String:", const char *)(
+			(id)objc_getClass("NSString"), SEL_("stringWithUTF8String:"), req + 15);
+		SEND(void, pb, "setString:", id)(pb, SEL_("setString:"), str);
+		write_file("pasteboard.txt", "ok", 2);
+	} else if (!strncmp(req, "pasteboard-get", 14)) {
+		const char *t = utf8(get(pb, "string"));
+		write_file("pasteboard.txt", t ? t : "", t ? strlen(t) : 0);
+	}
+}
+
 static void dump(void *ctx) {
+	if (!strcmp(getprogname(), "SpringBoard")) pasteboard_request();
 	len = 0;
 	emitted = 0;
 	id app = SEND(id, (id)objc_getClass("UIApplication"), "sharedApplication")((id)objc_getClass("UIApplication"), SEL_("sharedApplication"));
