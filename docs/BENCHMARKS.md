@@ -82,6 +82,19 @@ costs nearly nothing, but a phone that is scrolling or animating keeps up to six
 (`LP_NUM_THREADS`); set it lower when many phones animate at once. KSM pays off only with several phones: with one
 it just scans, so `scripts/pool.sh` turns it on when it starts two or more.
 
+## Shader caches (Zen 4c EPYC 8224P)
+
+Mesa (`~/.cache/mesa_shader_cache`) and metal2vulkan (`~/.cache/metal2vulkan`) keep compiled shaders between boots.
+
+| Boot | Cache files written | Boot to home screen |
+|---|---|---|
+| Empty caches | 847 | 31 s |
+| Second | 24 | 20 s |
+| Third | 8 | 21 s |
+
+Warm caches save about 10 s a boot. They live under the user's home, so every phone on the machine shares them, and
+`setup-vm.sh`'s first boot fills them. A machine image or snapshot made after setup should keep `~/.cache`.
+
 ## Streaming (`agent-sim serve`)
 
 `agent-sim encode-bench` times the browser stream on synthetic scrolling frames (and scores quality by decoding
