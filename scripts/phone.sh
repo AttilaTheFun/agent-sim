@@ -15,6 +15,7 @@
 #                             reaching it about 780 times a second and keeps more than a core busy at rest), and the
 #                             services Photos, Wallet and Watch need to open (assetsd, passd, financed,
 #                             nanoregistryd, accounts, media).
+#   AGENT_SIM_KSM=1           share identical memory pages with other phones (KSM)
 # The frame ring lives under ~/.cache rather than /run/user: x86Sim's container does not always see the host's
 # /run/user (no login session on a server), and then no frame ever reaches the host.
 set -Eeuo pipefail
@@ -69,6 +70,9 @@ start)
 		X86SIM_* | A64_* | LP_* | VK_* | MESA_* | SIMFB_*) passthrough+=(--setenv="$name") ;;
 		esac
 	done < <(env)
+	# let the kernel merge this phone's memory pages with identical ones of other phones (KSM, which setup-vm.sh turns
+	# on; AGENT_SIM_KSM=0 opts out)
+	[ "${AGENT_SIM_KSM:-1}" = 1 ] && passthrough+=(--property=MemoryKSM=yes)
 	systemd-run --user --quiet --unit="$UNIT" --collect "${passthrough[@]}" \
 		--setenv=SIMFB_RING="/Volumes/SystemRoot$RING" \
 		--setenv=X86SIM_METAL="${X86SIM_METAL:-backboardd}" \

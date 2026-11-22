@@ -9,17 +9,19 @@ All numbers: x86Sim 0.5.2, iOS 27.2 runtime (24B8117), 8 vCPU / 16 GB cloud VMs 
 ## Current setup, by CPU
 
 The phone as `scripts/setup-vm.sh` and `scripts/phone.sh` set it up: iPhone 17 Pro drawn at 2x, pre-translated
-runtime, x86Sim's slim services, Metal on Mesa's CPU Vulkan driver, Reduce Transparency and Reduce Motion on.
+runtime, x86Sim's slim services plus the ones apps need, Metal on Mesa's CPU Vulkan driver, Reduce Transparency and
+Reduce Motion on.
 
 | | AMD EPYC Zen 5 (9455) | AMD EPYC Zen 3 (Milan) |
 |---|---|---|
 | New phone's first boot | 112 s | about 6.5 min |
-| Boot to home screen | 13–17 s | 20–22 s |
+| Boot to home screen | 12–13 s | 20–22 s |
 | App launch, first frame | 0.4–0.7 s | 0.8–1.4 s |
 | App launch, settled (Settings, Safari) | 2.2–2.4 s | 2.3–2.9 s |
-| Settings scrolling | **53 fps** (frame p50 16.7 ms, p95 24.7 ms) | 21–22 fps |
-| Touch to first new frame (p50) | 64 ms | 21–34 ms |
-| Memory in use | 2.8 GB | 1.6–2.0 GB |
+| Settings scrolling | **54.7 fps** (frame p50 16.7 ms, p95 25.7 ms) | 21–22 fps |
+| Touch to first new frame (p50) | 13.5 ms | 21–34 ms |
+| CPU at rest | about 0 | |
+| Memory in use | 2.7 GB | 1.6–2.0 GB |
 
 The Zen 3 column predates `bench/run` and the last two settings (software drawing, single runs), so it is a lower
 bound. Per core speed matters most: the same 8 vCPUs on Zen 5 boot a new phone 3.5 times faster.
@@ -30,7 +32,8 @@ bound. Per core speed matters most: the same 8 vCPUs on Zen 5 boot a new phone 3
 |---|---|---|---|---|
 | Software drawing, slim services, 2x | 39.8 fps | 88 ms | 3.3–3.6 s | 13.4 s |
 | + Reduce Transparency and Motion | 47.4 fps | 80 ms | 3.3–3.6 s | 13.5 s |
-| + Metal on lavapipe, 6 threads | **53.1 fps** | **64 ms** | **2.2–2.4 s** | 17.1 s |
+| + Metal on lavapipe, 6 threads | 53.1 fps | 64 ms | 2.2–2.4 s | 17.1 s |
+| + sleepd and the services apps need | **54.7 fps** | **13.5 ms** | **2.2–2.4 s** | **12.5 s** |
 
 ## Earlier steps (Zen 3, single runs)
 
@@ -53,6 +56,26 @@ bound. Per core speed matters most: the same 8 vCPUs on Zen 5 boot a new phone 3
   over Zen 3 at the same core count.
 - Turning off more services than x86Sim's `slim` list (Siri, Spotlight, iCloud, Home, Wallet) did not help.
 
+Adding back `com.apple.sleepd` matters most for the last row. Without it SpringBoard keeps retrying and about 1.3 cores
+stay busy with nothing on screen, which also slowed touches. With it the phone is idle at rest.
+
+## Several phones on one VM (Zen 5, 8 vCPU / 16 GB)
+
+Three phones booted one after another; each one was checked to still draw by opening Settings after every boot.
+
+| | Without KSM | With KSM (`MemoryKSM=yes`, 1000–2000 pages per scan) |
+|---|---|---|
+| Memory in use, VM idle | 1.7 GB | 1.7 GB |
+| One phone | 4.5 GB | 4.7 GB |
+| Three phones, 2 min after the last boot | **8.7 GB** | **6.8 GB** (2.2 GB of pages merged) |
+| Load average, three phones at rest | 1.0 | 1.5 (KSM's own scanning) |
+| Boot with other phones running | 29–32 s | 29–32 s |
+
+Every phone kept drawing while the others booted. One phone needs about 2.3 GB on its own and about 1.7 GB with
+KSM, so memory allows six phones on a 16 GB VM and about twelve on 32 GB. CPU sets the real limit: a phone at rest
+costs nearly nothing, but a phone that is scrolling or animating keeps up to six drawing threads busy
+(`LP_NUM_THREADS`); set it lower when many phones animate at once.
+
 ## Streaming (`agent-sim serve`)
 
 `agent-sim encode-bench` times the browser stream on synthetic scrolling frames (and scores quality by decoding
@@ -67,6 +90,6 @@ them again). For the 2x phone at full size (804×1748):
 
 ## Not measured yet
 
-- Idle CPU: SpringBoard and darlingserver use about a core between them with nothing on screen.
+- Scrolling performance per phone with several phones animating at once.
 - Pinning the drawing threads to their own cores; Linux 6.11+.
 - End-to-end touch-to-pixels in a browser.
