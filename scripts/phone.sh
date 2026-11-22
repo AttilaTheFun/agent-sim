@@ -10,6 +10,11 @@
 #   X86SIM_METAL=backboardd   Metal on Mesa's CPU Vulkan driver (lavapipe): smoother scrolling than software drawing
 #   LP_NUM_THREADS            lavapipe's threads: two fewer than the CPUs, 2 to 6
 #   A64_JOBS=slim             x86Sim's smaller list of background services
+#   AGENT_SIM_EXTRA_JOBS      launchd labels to run on top of that list (space-separated). The default adds back
+#                             what slim leaves out but the phone needs: sleepd (without it SpringBoard retries
+#                             reaching it about 780 times a second and keeps more than a core busy at rest), and the
+#                             services Photos, Wallet and Watch need to open (assetsd, passd, financed,
+#                             nanoregistryd, accounts, media).
 # The frame ring lives under ~/.cache rather than /run/user: x86Sim's container does not always see the host's
 # /run/user (no login session on a server), and then no frame ever reaches the host.
 set -Eeuo pipefail
@@ -36,19 +41,41 @@ stop_phone() {
 	systemctl --user reset-failed "$UNIT" 2>/dev/null || true
 }
 
+# Per-program environment that x86Sim applies as each phone process starts (launchd jobs and XPC services do not get
+# the boot environment). WebKit's web content process reserves a 16 GB "Gigacage" at startup; under x86Sim that
+# reservation fails and every page crashes ("Could not allocate gigacage memory"). WebKit's own switch turns it off.
+PENV=${X86SIM_SCRATCH:-$HOME/.cache/x86sim}/a64-penv
+DEFAULT_EXTRA_JOBS="com.apple.sleepd com.apple.assetsd com.apple.passd com.apple.financed com.apple.nanoregistryd
+	com.apple.accountsd com.apple.amsaccountsd com.apple.mediaremoted com.apple.sharingd com.apple.medialibraryd"
+DEFAULT_EXTRA_JOBS=$(echo $DEFAULT_EXTRA_JOBS)
+ensure_penv() {
+	mkdir -p "$(dirname "$PENV")"
+	grep -qs '^com.apple.WebKit.WebContent .*GIGACAGE_ENABLED=0' "$PENV" ||
+		echo "com.apple.WebKit.WebContent GIGACAGE_ENABLED=0" >>"$PENV"
+}
+
 case $ACTION in
 start)
 	stop_phone
+	ensure_penv
 	mkdir -p "$RINGS"
 	# a ring left from the last boot would look like a home screen already drawn
 	rm -f "$RING" "$RING".* "$DIR/data/framebuffer.bgra"
-	systemd-run --user --quiet --unit="$UNIT" --collect \
+	# x86Sim's, lavapipe's and Vulkan's own settings from this environment reach the phone too
+	passthrough=()
+	while IFS='=' read -r name _; do
+		case $name in
+		X86SIM_METAL | LP_NUM_THREADS | A64_JOBS | VK_ICD_FILENAMES | SIMFB_RING) ;;
+		X86SIM_* | A64_* | LP_* | VK_* | MESA_* | SIMFB_*) passthrough+=(--setenv="$name") ;;
+		esac
+	done < <(env)
+	systemd-run --user --quiet --unit="$UNIT" --collect "${passthrough[@]}" \
 		--setenv=SIMFB_RING="/Volumes/SystemRoot$RING" \
 		--setenv=X86SIM_METAL="${X86SIM_METAL:-backboardd}" \
 		--setenv=LP_NUM_THREADS="${LP_NUM_THREADS:-$(n=$(($(nproc) - 2)); echo $((n < 2 ? 2 : n > 6 ? 6 : n)))}" \
 		--setenv=A64_JOBS="${A64_JOBS:-slim}" \
 		--setenv=VK_ICD_FILENAMES="${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json}" \
-		"$X" shell -c "A64_DEVICE=$DIR A64_KEEP=1 SECS=7200 cli/libexec/arm64/boot-a64.sh"
+		"$X" shell -c "A64_DEVICE=$DIR A64_KEEP=1 SECS=7200 cli/libexec/arm64/boot-a64.sh ${AGENT_SIM_EXTRA_JOBS-$DEFAULT_EXTRA_JOBS}"
 	echo "phone.sh: starting $DEVICE (journalctl --user -u $UNIT)"
 	;;
 wait)
