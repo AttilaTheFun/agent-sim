@@ -113,12 +113,38 @@ reduce_effects() {
 	done
 	touch "$calm"
 }
-if [[ $(aot_status) != *"(current)"* ]] || [ ! -e "$calm" ]; then
-	if [ ! -e "$trained" ] || [ ! -e "$calm" ]; then
-		log "Booting the phone once: it learns what runs, and turns on Reduce Transparency and Motion"
+granted=$DIR/.agent-sim-granted
+# The built-in apps get their permissions up front, as on a phone that has been set up: otherwise their prompts
+# (location for Maps, contacts for Wallet...) show up, and x86Sim leaves them on screen over other apps. Apps you
+# install still ask.
+grant_builtin() {
+	local apps
+	apps=$(python3 - "$DIR/data/Library/SpringBoard/IconState.plist" <<'PY'
+import plistlib, sys
+out = []
+def walk(v):
+    if isinstance(v, str) and v.startswith("com.apple.") and v not in out:
+        out.append(v)
+    elif isinstance(v, (list, tuple)):
+        for i in v: walk(i)
+    elif isinstance(v, dict):
+        for i in v.values(): walk(i)
+walk(plistlib.load(open(sys.argv[1], "rb")))
+print(" ".join(out))
+PY
+)
+	for app in $apps; do
+		(cd "$DATA" && X86SIM_DEVICE=$DIR "$X" x86sim privacy grant all "$app" >/dev/null 2>&1) || true
+	done
+	touch "$granted"
+}
+if [[ $(aot_status) != *"(current)"* ]] || [ ! -e "$calm" ] || [ ! -e "$granted" ]; then
+	if [ ! -e "$trained" ] || [ ! -e "$calm" ] || [ ! -e "$granted" ]; then
+		log "Booting the phone once: it learns what runs, gets Reduce Transparency and Motion, and its apps' permissions"
 		"$HERE/phone.sh" start "$DEVICE"
 		TIMEOUT=1800 "$HERE/phone.sh" wait "$DEVICE"
 		reduce_effects
+		grant_builtin
 		[ -e "$trained" ] || sleep 120
 		"$HERE/phone.sh" stop "$DEVICE"
 		touch "$trained"
