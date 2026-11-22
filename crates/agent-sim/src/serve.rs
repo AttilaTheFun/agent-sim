@@ -20,6 +20,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 const VIEWER: &str = include_str!("viewer.html");
+/// With `--scale 0`, the stream is the largest integer fraction of the screen at most this wide: a 2x phone streams
+/// at full size, a 3x one at half.
+const MAX_AUTO_WIDTH: usize = 900;
 
 pub struct Options {
     pub device: Device,
@@ -86,6 +89,11 @@ fn encode_loop(shared: Arc<Shared>, ring_path: std::path::PathBuf, scale: usize,
         if key {
             encoder.force_keyframe();
         }
+        let scale = if scale == 0 {
+            frame.width.div_ceil(MAX_AUTO_WIDTH).max(1)
+        } else {
+            scale
+        };
         let yuv = bgra_to_i420(&frame.bgra, frame.width, frame.height, scale);
         let out = match encoder.encode(&yuv) {
             Ok(o) if !o.annexb.is_empty() => o,

@@ -1,4 +1,5 @@
 mod device;
+mod encode_bench;
 mod input;
 mod ring;
 mod serve;
@@ -30,10 +31,25 @@ enum Command {
         /// Access token in the URL path; random when not given.
         #[arg(long, env = "AGENT_SIM_TOKEN")]
         token: Option<String>,
-        /// Stream at 1/N of the device's pixel size in each direction.
-        #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u8).range(1..=4))]
+        /// Stream at 1/N of the device's pixel size in each direction; 0 picks the largest size up to 900 pixels
+        /// wide.
+        #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=4))]
         scale: u8,
         /// Video bitrate in kbit/s.
+        #[arg(long, default_value_t = 4000)]
+        bitrate: u32,
+    },
+    /// Time the streaming path on synthetic frames (for tuning).
+    #[command(hide = true)]
+    EncodeBench {
+        #[arg(long, default_value_t = 804)]
+        width: usize,
+        #[arg(long, default_value_t = 1748)]
+        height: usize,
+        #[arg(long, default_value_t = 1)]
+        scale: usize,
+        #[arg(long, default_value_t = 120)]
+        frames: usize,
         #[arg(long, default_value_t = 4000)]
         bitrate: u32,
     },
@@ -50,6 +66,19 @@ fn random_token() -> Result<String> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::EncodeBench {
+            width,
+            height,
+            scale,
+            frames,
+            bitrate,
+        } => encode_bench::run(
+            width,
+            height,
+            scale,
+            frames.max(1),
+            bitrate.saturating_mul(1000),
+        ),
         Command::Serve {
             device,
             listen,
