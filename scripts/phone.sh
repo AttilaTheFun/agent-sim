@@ -76,7 +76,11 @@ start)
 	done < <(env)
 	# let the kernel merge this phone's memory pages with identical ones of other phones (KSM; takes effect while
 	# /sys/kernel/mm/ksm/run is 1, which pool.sh sets for two or more phones; AGENT_SIM_KSM=0 opts out)
-	[ "${AGENT_SIM_KSM:-1}" = 1 ] && passthrough+=(--property=MemoryKSM=yes)
+	# Needs Linux 6.4+ (per-process merging); on older kernels systemd refuses to start the unit, so probe first.
+	if [ "${AGENT_SIM_KSM:-1}" = 1 ] && [ "$(cat /sys/kernel/mm/ksm/run 2>/dev/null)" = 1 ] &&
+		systemd-run --user --quiet --wait --collect --property=MemoryKSM=yes true 2>/dev/null; then
+		passthrough+=(--property=MemoryKSM=yes)
+	fi
 	systemd-run --user --quiet --unit="$UNIT" --collect "${passthrough[@]}" \
 		--setenv=SIMFB_RING="/Volumes/SystemRoot$RING" \
 		--setenv=X86SIM_METAL="${X86SIM_METAL:-backboardd,iconservicesagent}" \
