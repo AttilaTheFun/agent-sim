@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""Benchmark one phone, repeatably.
+
+    bench/run [--device p] [--runs 3] [--out result.json] [--no-boot] [VAR=value ...]
+
+Boots the phone with scripts/phone.sh (VAR=value pairs go into its environment, e.g. X86SIM_METAL=backboardd),
+waits until the machine is quiet, then measures with x86Sim's tests/perf.py:
+
+  boot      first frame and home screen, from a cold start of the phone
+  launch    first frame and settled screen for Settings, Safari, Maps and News (median of --runs)
+  scroll    frames per second while scrolling Settings, frame times, touch-to-frame latency, CPU per process
+            (median of --runs). A run counts only when Settings is in front and the screen moved; otherwise it
+            is retried.
+  idle      CPU of the phone's processes at rest
+
+Prints a summary and writes everything as JSON.
+"""
+import argparse
+import json
+import os
+import platform
+import re
+import statistics
+import subprocess
+import sys
+import threading
+import time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PHONE = os.path.join(ROOT, "scripts", "phone.sh")
+APPS = ["com.apple.Preferences", "com.apple.mobilesafari", "com.apple.Maps", "com.apple.news"]
+PATH_PROCS = ("darlingserver", "backboardd", "SpringBoard", "Preferences", "launchd_sim", "mtlvk")
+
+
+def sh(cmd, env=None, timeout=1800, cwd=None):
+    r = subprocess.run(cmd, env=env, cwd=cwd, timeout=timeout, capture_output=True, text=True)
+    return r.returncode, r.stdout + r.stderr
+
+
+def cpu_model():
+    try:
+        for line in open("/proc/cpuinfo"):
+            if line.startswith("model name"):
+                return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor()
+
+
+def proc_ticks(names):
+    out = {}
+    for p in filter(str.isdigit, os.listdir("/proc")):
+        try:
+            comm = open(f"/proc/{p}/comm").read().strip()
+            if comm in names:
+                f = open(f"/proc/{p}/stat").read().rsplit(")", 1)[1].split()
+                out[comm] = out.get(comm, 0) + int(f[11]) + int(f[12])
+        except OSError:
+            pass
+    return out
+
+
+def wait_quiet(limit=300, load=1.5):
+    start = time.time()
+    while time.time() - start < limit:
+        if os.getloadavg()[0] < load:
+            break
+        time.sleep(10)
+    return round(time.time() - start), round(os.getloadavg()[0], 2)
+
+
+class Phone:
+    def __init__(self, device, extra_env):
+        self.device = device
+        ver = os.environ.get("X86SIM_VERSION", "0.5.2")
+        home = os.path.expanduser("~")
+        self.x86sim = os.path.join(os.environ.get("AGENT_SIM_HOME", f"{home}/.local/share/agent-sim"),
+                                   f"x86sim-{ver}", "AppRun")
+        self.data = os.path.join(os.environ.get("XDG_DATA_HOME", f"{home}/.local/share"), "x86sim")
+        self.dir = os.path.join(self.data, "var", f"device-a64-{device}")
+        self.ring = f"{home}/.cache/x86sim/rings/x86sim-a64-{device}-simfb.ring"
+        uid = os.getuid()
+        self.env = dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{uid}",
+                        DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{uid}/bus",
+                        X86SIM_DEVICE=self.dir, SIMFB_RING_LINUX=self.ring, **extra_env)
+
+    def phone(self, action):
+        code, out = sh([PHONE, action, self.device], env=self.env)
+        if code:
+            sys.exit(f"bench: phone.sh {action} failed:\n{out}")
+        return out
+
+    def perf(self, *args, timeout=300):
+        return sh(["python3", "tests/perf.py", *args], env=self.env, cwd=self.data, timeout=timeout)[1]
+
+    def x86(self, *args):
+        return sh([self.x86sim, "x86sim", *args], env=self.env, cwd=self.data, timeout=120)
+
+    def ring_stats(self):
+        code, out = sh(["python3", "-c", "import sys,json;sys.path.insert(0,'cli/libexec');import fbring;"
+                        f"print(json.dumps(fbring.Ring({self.ring!r}).stats()))"], env=self.env, cwd=self.data)
+        try:
+            return json.loads(out.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return None
+
+
+def boot(ph):
+    ph.phone("stop")
+    t0 = time.time()
+    ph.phone("start")
+    while not os.path.exists(ph.ring):
+        time.sleep(0.2)
+    first = time.time() - t0
+    ph.phone("wait")
+    return {"first_frame_s": round(first, 1), "home_s": round(time.time() - t0, 1)}
+
+
+def launch(ph, runs):
+    out = {}
+    for app in APPS:
+        firsts, settled = [], []
+        for _ in range(runs):
+            m = re.search(r"first frame (-?\d+) ms, settled (\d+) ms", ph.perf("launch", app))
+            if m and int(m.group(1)) >= 0:
+                firsts.append(int(m.group(1)))
+                settled.append(int(m.group(2)))
+            time.sleep(2)
+        out[app] = {"first_frame_ms": statistics.median(firsts) if firsts else None,
+                    "settled_ms": statistics.median(settled) if settled else None, "runs": len(firsts)}
+    return out
+
+
+def scroll_once(ph):
+    ph.x86("launch", "com.apple.Preferences")
+    time.sleep(6)
+    before = proc_ticks(PATH_PROCS)
+    t = time.time()
+    text = ph.perf("scroll", "8")
+    secs = time.time() - t
+    after = proc_ticks(PATH_PROCS)
+    hz = os.sysconf("SC_CLK_TCK")
+    cpu = {k: round((after[k] - before.get(k, 0)) / hz / secs * 100) for k in after}
+    fps = re.search(r"(\d+) frames, ([\d.]+) fps while moving; frame time ms p50 ([\d.]+) p95 ([\d.]+)", text)
+    lat = re.search(r"latency ms .*?p50 ([\d.]+) max ([\d.]+)", text)
+    run = {"cpu_pct": cpu}
+    if fps:
+        run.update(frames=int(fps.group(1)), fps=float(fps.group(2)), frame_p50_ms=float(fps.group(3)),
+                   frame_p95_ms=float(fps.group(4)))
+    if lat:
+        run.update(touch_to_frame_p50_ms=float(lat.group(1)), touch_to_frame_max_ms=float(lat.group(2)))
+    # Settings in front and the list moved: its process was busy and frames came out
+    run["valid"] = cpu.get("Preferences", 0) >= 15 and run.get("frames", 0) >= 40
+    return run
+
+
+def scroll(ph, runs):
+    good, tries = [], []
+    while len(good) < runs and len(tries) < runs * 2 + 1:
+        r = scroll_once(ph)
+        tries.append(r)
+        if r["valid"]:
+            good.append(r)
+    med = lambda k: statistics.median([r[k] for r in good if k in r]) if good else None  # noqa: E731
+    return {"fps": med("fps"), "frame_p50_ms": med("frame_p50_ms"), "frame_p95_ms": med("frame_p95_ms"),
+            "touch_to_frame_p50_ms": med("touch_to_frame_p50_ms"), "valid_runs": len(good),
+            "attempts": tries}
+
+
+def idle(ph):
+    before = proc_ticks(PATH_PROCS)
+    t = time.time()
+    time.sleep(10)
+    after = proc_ticks(PATH_PROCS)
+    hz = os.sysconf("SC_CLK_TCK")
+    return {k: round((after[k] - before.get(k, 0)) / hz / (time.time() - t) * 100) for k in after}
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--device", default="p")
+    ap.add_argument("--runs", type=int, default=3)
+    ap.add_argument("--out")
+    ap.add_argument("--no-boot", action="store_true", help="measure the phone as it runs now")
+    ap.add_argument("env", nargs="*", help="VAR=value for the phone's environment")
+    a = ap.parse_args()
+    extra = dict(kv.split("=", 1) for kv in a.env)
+    ph = Phone(a.device, extra)
+    result = {"machine": {"cpu": cpu_model(), "cpus": os.cpu_count(), "kernel": platform.release(),
+                          "mem_gb": round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30)},
+              "device": a.device, "env": extra, "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if not a.no_boot:
+        result["boot"] = boot(ph)
+    result["quiet_after_s"], result["quiet_load"] = wait_quiet()
+    result["idle_cpu_pct"] = idle(ph)
+    result["launch"] = launch(ph, a.runs)
+    result["scroll"] = scroll(ph, a.runs)
+    result["simfb"] = ph.ring_stats()
+    with open("/proc/meminfo") as f:
+        mem = {l.split(":")[0]: int(l.split()[1]) for l in f}
+    result["mem_used_mb"] = round((mem["MemTotal"] - mem["MemAvailable"]) / 1024)
+
+    b, s = result.get("boot", {}), result["scroll"]
+    print(f"{result['machine']['cpu']} ({result['machine']['cpus']} CPUs), device {a.device} {extra or ''}")
+    if b:
+        print(f"  boot        first frame {b['first_frame_s']} s, home {b['home_s']} s")
+    for app, v in result["launch"].items():
+        print(f"  launch      {app.split('.')[-1]:<14} first frame {v['first_frame_ms']} ms, settled "
+              f"{v['settled_ms']} ms ({v['runs']} runs)")
+    print(f"  scroll      {s['fps']} fps, frame p50 {s['frame_p50_ms']} / p95 {s['frame_p95_ms']} ms, "
+          f"touch to frame {s['touch_to_frame_p50_ms']} ms ({s['valid_runs']} valid of {len(s['attempts'])})")
+    print(f"  idle cpu    {result['idle_cpu_pct']}")
+    print(f"  memory      {result['mem_used_mb']} MB in use")
+    if a.out:
+        with open(a.out, "w") as f:
+            json.dump(result, f, indent=1)
+
+
+if __name__ == "__main__":
+    main()
