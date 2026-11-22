@@ -130,6 +130,9 @@ Work through these in order, benchmarking after each:
 **Done when** an agent installs a sample app, signs in through its form and checks the result using only `snapshot`
 and the input commands.
 
+Status: done for native apps (CLI, MCP server, SKILL.md, `logs`; checked with Settings, Messages, Safari's chrome and
+a converted device build). Web content inside web views is not in `snapshot` yet (docs/KNOWN_ISSUES.md).
+
 ### Phase 5: Apps
 
 - Install `.app` simulator builds (arm64), including Expo Go and Expo development clients with Metro on the VM.
@@ -138,6 +141,9 @@ and the input commands.
 - A compatibility list of open-source apps that run, with what breaks for the ones that do not.
 
 **Done when** ten public sample apps (UIKit, SwiftUI, React Native, Expo, Flutter) install and launch.
+
+Status: `agent-sim install` takes .app and .ipa; device builds are retagged for the simulator and encrypted ones are
+refused (checked with a device-tagged build of a system app). The sample-app list is next.
 
 ### Phase 6: Remote and cloud
 

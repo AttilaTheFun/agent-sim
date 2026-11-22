@@ -44,6 +44,9 @@ impl Element {
 pub struct Snapshot {
     /// the app in front (bundle id), or None on the home screen
     pub app: Option<String>,
+    /// the app in front did not answer (still starting, or busy): only SpringBoard's elements are listed
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub app_not_answering: bool,
     pub elements: Vec<Element>,
 }
 
@@ -117,11 +120,11 @@ fn wait_for(path: &Path, timeout: Duration) -> Result<String> {
 }
 
 /// Asks one process for its elements: `name` is the file it writes (ax-<pid>.json, SpringBoard ax-springboard.json).
-fn dump(dir: &Path, linux_pid: u32, name: &str) -> Result<RawDump> {
+fn dump(dir: &Path, linux_pid: u32, name: &str, timeout: Duration) -> Result<RawDump> {
     let file = dir.join(name);
     let _ = std::fs::remove_file(&file);
     phone::signal(linux_pid, libc::SIGUSR2)?;
-    let text = wait_for(&file, Duration::from_secs(5))?;
+    let text = wait_for(&file, timeout)?;
     serde_json::from_str(&text).with_context(|| format!("reading {}", file.display()))
 }
 
@@ -131,14 +134,23 @@ pub fn snapshot(dev: &Device) -> Result<Snapshot> {
     let sb = phone::processes(dev, |_, exe| exe == "SpringBoard")?;
     let sb = *sb.first().context("the phone is not running")?;
     let _ = std::fs::remove_file(dir.join("front.json"));
-    let springboard = dump(&dir, sb, "ax-springboard.json")?;
+    let springboard = dump(&dir, sb, "ax-springboard.json", Duration::from_secs(5))?;
     wait_for(&dir.join("front.json"), Duration::from_secs(2))?;
     let front: Front = serde_json::from_str(&std::fs::read_to_string(dir.join("front.json"))?)?;
+    let mut app_not_answering = false;
     let app = match (front.pid, &front.bundle) {
         (p, Some(_)) if p > 0 => {
             let pids = phone::processes(dev, |inner, _| inner == p)?;
             match pids.first() {
-                Some(&linux) => Some(dump(&dir, linux, &format!("ax-{p}.json"))?),
+                Some(&linux) => {
+                    match dump(&dir, linux, &format!("ax-{p}.json"), Duration::from_secs(3)) {
+                        Ok(d) => Some(d),
+                        Err(_) => {
+                            app_not_answering = true;
+                            None
+                        }
+                    }
+                }
                 None => None,
             }
         }
@@ -164,7 +176,7 @@ pub fn snapshot(dev: &Device) -> Result<Snapshot> {
         let mut v: Vec<_> = a.windows.iter().map(|w| (a.process.as_str(), w)).collect();
         v.sort_by(|x, y| y.1.level.total_cmp(&x.1.level));
         parts.extend(v);
-    } else {
+    } else if !app_not_answering {
         parts.extend(sb_windows(&|w| {
             w.level <= 1000.0 && !w.class.contains("StatusBar")
         }));
@@ -207,7 +219,8 @@ pub fn snapshot(dev: &Device) -> Result<Snapshot> {
         }
     }
     let snap = Snapshot {
-        app: front.bundle.filter(|_| app.is_some()),
+        app: front.bundle.filter(|_| app.is_some() || app_not_answering),
+        app_not_answering,
         elements,
     };
     std::fs::write(
@@ -246,6 +259,8 @@ pub fn format(s: &Snapshot) -> String {
     let mut out = format!(
         "{}\n",
         match &s.app {
+            Some(a) if s.app_not_answering =>
+                format!("app {a} (not answering yet: starting or busy; snapshot again in a moment)"),
             Some(a) => format!("app {a}"),
             None => "home screen".to_string(),
         }
@@ -280,14 +295,24 @@ pub fn resolve(dev: &Device, r: &str) -> Result<Element> {
         .with_context(|| format!("no element {r} in the last snapshot"))
 }
 
-/// The first element whose label, value or id contains `text` (case-insensitive).
+/// The element `text` names: the first whose label, value or id equals it (ignoring case), else the first that
+/// contains it.
 pub fn find<'a>(s: &'a Snapshot, text: &str) -> Option<&'a Element> {
     let t = text.to_lowercase();
-    s.elements.iter().find(|e| {
+    let fields = |e: &'a Element| {
         [&e.label, &e.value, &e.id]
-            .iter()
-            .any(|f| f.as_ref().is_some_and(|v| v.to_lowercase().contains(&t)))
-    })
+            .into_iter()
+            .flatten()
+            .map(|v| v.to_lowercase())
+    };
+    s.elements
+        .iter()
+        .find(|e| fields(e).any(|v| v == t))
+        .or_else(|| {
+            s.elements
+                .iter()
+                .find(|e| fields(e).any(|v| v.contains(&t)))
+        })
 }
 
 #[cfg(test)]

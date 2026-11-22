@@ -218,11 +218,18 @@ fn call(default_device: &str, name: &str, args: &Value) -> Result<Value> {
             then_snapshot(&dev, done)
         }
         "launch" => {
-            let done = cmd::launch(&dev, s(args, "bundle_id")?)?;
+            let logs = args.get("logs").and_then(Value::as_bool).unwrap_or(false);
+            let done = cmd::launch(&dev, s(args, "bundle_id")?, logs)?;
             std::thread::sleep(Duration::from_millis(1500));
             then_snapshot(&dev, done)
         }
         "terminate" => text(cmd::terminate(&dev, s(args, "bundle_id")?)?),
+        "logs" => text(cmd::logs(
+            &dev,
+            s(args, "bundle_id")?,
+            args.get("lines").and_then(Value::as_u64).unwrap_or(100) as usize,
+            args.get("grep").and_then(Value::as_str),
+        )?),
         "install" => text(cmd::install(&dev, &PathBuf::from(s(args, "path")?))?),
         "uninstall" => text(cmd::uninstall(&dev, s(args, "bundle_id")?)?),
         "apps" => text(cmd::apps(

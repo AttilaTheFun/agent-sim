@@ -30,6 +30,12 @@ Darling's darlingserver.
 Note that a permission prompt staying over other apps while its app is still running is iOS behavior, not this
 bug: SpringBoard ignores Home while such an alert is up ("an alert item or sheet is showing and can't be dismissed").
 
+### `snapshot` does not see web content
+
+Safari's pages and other web views are drawn by WebKit's WebContent process; the accessibility reader walks the
+app's own views, so a web view shows up as its toolbar and controls only. Use `screenshot` and tap by coordinates
+for web content for now. Native views (UIKit, SwiftUI, React Native, Flutter's semantics) are read in full.
+
 ### Siri does not open
 
 Neither the Siri app (`com.apple.SiriApp`; launching it returns no process) nor the Siri button brings up Siri's UI,

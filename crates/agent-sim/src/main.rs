@@ -88,7 +88,21 @@ enum Command {
     /// Remove an installed app.
     Uninstall { bundle_id: String },
     /// Start an app.
-    Launch { bundle_id: String },
+    Launch {
+        bundle_id: String,
+        /// Capture its os_log messages (read them with `agent-sim logs`); restarts it if it runs.
+        #[arg(long)]
+        logs: bool,
+    },
+    /// An app's os_log messages and the report of its last run (a crash's cause and backtrace).
+    Logs {
+        bundle_id: String,
+        #[arg(long, default_value_t = 100)]
+        lines: usize,
+        /// Only lines containing this text.
+        #[arg(long)]
+        grep: Option<String>,
+    },
     /// Stop an app.
     Terminate { bundle_id: String },
     /// List installed apps (yours; --all for the system's too).
@@ -188,7 +202,12 @@ fn main() -> Result<()> {
         Command::Press { button } => say(cmd::press(&dev()?, &button)),
         Command::Install { path } => say(cmd::install(&dev()?, &path)),
         Command::Uninstall { bundle_id } => say(cmd::uninstall(&dev()?, &bundle_id)),
-        Command::Launch { bundle_id } => say(cmd::launch(&dev()?, &bundle_id)),
+        Command::Launch { bundle_id, logs } => say(cmd::launch(&dev()?, &bundle_id, logs)),
+        Command::Logs {
+            bundle_id,
+            lines,
+            grep,
+        } => say(cmd::logs(&dev()?, &bundle_id, lines, grep.as_deref())),
         Command::Terminate { bundle_id } => say(cmd::terminate(&dev()?, &bundle_id)),
         Command::Apps { all } => say(cmd::apps(&dev()?, all)),
         Command::Open { url } => say(cmd::open_url(&dev()?, &url)),

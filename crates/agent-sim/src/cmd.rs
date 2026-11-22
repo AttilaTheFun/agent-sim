@@ -199,23 +199,50 @@ pub fn press(dev: &Device, button: &str) -> Result<String> {
     Ok(format!("pressed {button}"))
 }
 
-pub fn launch(dev: &Device, bundle: &str) -> Result<String> {
-    let out = phone::x86sim_ok(dev, &["launch", bundle]).map_err(|e| {
-        if format!("{e:#}").contains("returned nil for") {
-            anyhow::anyhow!("{bundle} is not installed (`agent-sim apps --all` lists what is)")
-        } else {
-            e
+pub fn launch(dev: &Device, bundle: &str, logs: bool) -> Result<String> {
+    let args: Vec<&str> = if logs {
+        vec!["launch", "--oslog", "--terminate-running-process", bundle]
+    } else {
+        vec!["launch", bundle]
+    };
+    // an app started right after it was stopped sometimes dies during startup: start it again once
+    for attempt in 0..2 {
+        let out = phone::x86sim_ok(dev, &args).map_err(|e| {
+            if format!("{e:#}").contains("returned nil for") {
+                anyhow::anyhow!("{bundle} is not installed (`agent-sim apps --all` lists what is)")
+            } else {
+                e
+            }
+        })?;
+        let pid = out.split_whitespace().last().unwrap_or("?").to_string();
+        if pid == "-1" {
+            bail!("{bundle} did not start (is it installed? `agent-sim apps`)");
         }
-    })?;
-    let pid = out.split_whitespace().last().unwrap_or("?");
-    if pid == "-1" {
-        bail!("{bundle} did not start (is it installed? `agent-sim apps`)");
+        std::thread::sleep(Duration::from_millis(1500));
+        let alive = phone::x86sim_run(dev, &["pidof", bundle])?.status.success();
+        if alive || attempt == 1 {
+            return Ok(format!("launched {bundle} (pid {pid})"));
+        }
     }
-    Ok(format!("launched {bundle} (pid {pid})"))
+    unreachable!()
 }
 
 pub fn terminate(dev: &Device, bundle: &str) -> Result<String> {
-    phone::x86sim_ok(dev, &["terminate", bundle])?;
+    if let Err(e) = phone::x86sim_ok(dev, &["terminate", bundle]) {
+        if format!("{e:#}").contains("not running") {
+            return Ok(format!("{bundle} was not running"));
+        }
+        return Err(e);
+    }
+    // x86Sim answers before the process has exited; a launch right away would race the old process
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(10) {
+        let out = phone::x86sim_run(dev, &["pidof", bundle])?;
+        if !out.status.success() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
     Ok(format!("terminated {bundle}"))
 }
 
@@ -292,4 +319,78 @@ pub fn wait(dev: &Device, text: &str, timeout: Duration, gone: bool) -> Result<S
         }
         std::thread::sleep(Duration::from_millis(400));
     }
+}
+
+/// The executable name of an installed app.
+fn executable(dev: &Device, bundle: &str) -> Result<String> {
+    let out = phone::x86sim_ok(dev, &["listapps", "--json"])?;
+    let v: serde_json::Value = serde_json::from_str(&out).context("reading x86sim listapps")?;
+    v.get(bundle)
+        .and_then(|a| a.get("CFBundleExecutable"))
+        .and_then(|e| e.as_str())
+        .map(str::to_string)
+        .with_context(|| format!("{bundle} is not installed"))
+}
+
+fn newest(dir: &Path, prefix: &str) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(prefix))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .max()
+        .map(|(_, p)| p)
+}
+
+fn tail(path: &Path, lines: usize, matching: Option<&str>) -> String {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let all: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.contains("is implemented in both"))
+        .filter(|l| matching.is_none_or(|m| l.contains(m)))
+        .collect();
+    all[all.len().saturating_sub(lines)..].join("\n")
+}
+
+/// An app's os_log messages (when it was launched with logs on) and the translator's report of its last run, which
+/// names a crash's cause and guest backtrace.
+pub fn logs(dev: &Device, bundle: &str, lines: usize, matching: Option<&str>) -> Result<String> {
+    let exe = executable(dev, bundle)?;
+    let mut out = String::new();
+    let oslog = newest(
+        &phone::data_dir(dev).join("var/log"),
+        &format!("oslog.{exe}."),
+    );
+    match oslog {
+        Some(p) => {
+            out.push_str(&format!("== os_log ({})\n", p.display()));
+            out.push_str(&tail(&p, lines, matching));
+        }
+        None => out.push_str(&format!(
+            "== os_log: none yet (`agent-sim launch {bundle} --logs` starts the app with its os_log captured)"
+        )),
+    }
+    let name = dev
+        .dir
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let short = name.strip_prefix("device-a64-").unwrap_or(&name);
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    let run = home.join(format!(
+        ".cache/x86sim/a64prefix-{short}/private/var/tmp/x86sim-a64"
+    ));
+    if let Some(p) = newest(&run, &format!("{exe}.")) {
+        let report = tail(&p, lines.min(60), None);
+        let crashed = report.contains("guest exception") || report.contains("killing pid");
+        out.push_str(&format!(
+            "\n\n== last run ({}){}\n{report}",
+            p.display(),
+            if crashed { ": crashed" } else { "" }
+        ));
+    }
+    Ok(out)
 }
