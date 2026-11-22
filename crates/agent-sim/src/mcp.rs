@@ -228,6 +228,17 @@ fn call(default_device: &str, name: &str, args: &Value) -> Result<Value> {
             let done = cmd::appearance(&dev, s(args, "mode")?)?;
             then_snapshot(&dev, done)
         }
+        "status_bar" => text(cmd::status_bar(
+            &dev,
+            args.get("time").and_then(Value::as_str),
+            args.get("battery")
+                .and_then(Value::as_u64)
+                .map(|b| b.min(100) as u8),
+            args.get("charging")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            args.get("clear").and_then(Value::as_bool).unwrap_or(false),
+        )?),
         "clipboard" => text(cmd::clipboard(
             &dev,
             args.get("text").and_then(Value::as_str),

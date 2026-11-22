@@ -99,7 +99,8 @@ ensure_penv() {
 	[ -n "${AGENT_SIM_HOOK_LOG:-}" ] && log=" AGENT_SIM_HOOK_LOG=$AGENT_SIM_HOOK_LOG"
 	# a later line wins for a program it names: SpringBoard's comes after the one for every program
 	echo "* DYLD_INSERT_LIBRARIES=${base:+$base:}$h/libagentsim-ax.dylib" >>"$PENV"
-	echo "SpringBoard DYLD_INSERT_LIBRARIES=${base:+$base:}$h/libagentsim-ax.dylib:$h/libagentsim-springboard.dylib$log" >>"$PENV"
+	# AGENT_SIM_SB_EXTRA: more libraries (Darling paths, ':'-separated) and settings for SpringBoard, for debugging
+	echo "SpringBoard DYLD_INSERT_LIBRARIES=${base:+$base:}$h/libagentsim-ax.dylib:$h/libagentsim-springboard.dylib${AGENT_SIM_SB_EXTRA:+:$AGENT_SIM_SB_EXTRA}$log" >>"$PENV"
 }
 
 case $ACTION in

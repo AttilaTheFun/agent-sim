@@ -492,16 +492,12 @@ pub fn appearance(dev: &Device, mode: &str) -> Result<String> {
     Ok(format!("appearance {mode}"))
 }
 
-/// The general pasteboard, through SpringBoard (a background process may not read it): `None` reads it.
-pub fn clipboard(dev: &Device, set: Option<&str>) -> Result<String> {
+/// A request to agent-sim's hook in SpringBoard (hooks/ax.c), and its answer.
+fn springboard(dev: &Device, req: &str) -> Result<String> {
     let dir = phone::data_dir(dev).join("tmp/agent-sim");
     std::fs::create_dir_all(&dir)?;
-    let answer = dir.join("pasteboard.txt");
+    let answer = dir.join("answer.txt");
     let _ = std::fs::remove_file(&answer);
-    let req = match set {
-        Some(t) => format!("pasteboard-set\n{t}"),
-        None => "pasteboard-get".to_string(),
-    };
     std::fs::write(dir.join("cmd.txt"), req)?;
     let sb = phone::processes(dev, |_, exe| exe == "SpringBoard")?;
     phone::signal(
@@ -511,17 +507,57 @@ pub fn clipboard(dev: &Device, set: Option<&str>) -> Result<String> {
     let start = Instant::now();
     loop {
         if let Ok(t) = std::fs::read_to_string(&answer) {
-            return Ok(match set {
-                Some(_) => "clipboard set".to_string(),
-                None => t,
-            });
+            return Ok(t);
         }
-        // the first read after a boot waits for the pasteboard service to start
+        // the first pasteboard read after a boot waits for the pasteboard service to start
         if start.elapsed() > Duration::from_secs(15) {
+            // not left for the next signal to act on
+            let _ = std::fs::remove_file(dir.join("cmd.txt"));
             bail!("no answer from SpringBoard (are agent-sim's hooks loaded?)");
         }
         std::thread::sleep(Duration::from_millis(25));
     }
+}
+
+/// The general pasteboard, through SpringBoard (a background process may not read it): `None` reads it.
+pub fn clipboard(dev: &Device, set: Option<&str>) -> Result<String> {
+    match set {
+        Some(t) => {
+            springboard(dev, &format!("pasteboard-set\n{t}"))?;
+            Ok("clipboard set".into())
+        }
+        None => springboard(dev, "pasteboard-get"),
+    }
+}
+
+/// Overrides status bar items for clean screenshots, as `simctl status_bar override`; `clear` puts them back.
+pub fn status_bar(
+    dev: &Device,
+    time: Option<&str>,
+    battery: Option<u8>,
+    charging: bool,
+    clear: bool,
+) -> Result<String> {
+    if clear {
+        springboard(dev, "statusbar-clear")?;
+        return Ok("status bar back to normal".into());
+    }
+    let mut req = String::from("statusbar\n");
+    if let Some(t) = time {
+        req.push_str(&format!("time={t}\n"));
+    }
+    if let Some(b) = battery {
+        req.push_str(&format!(
+            "battery={}\ncharging={}\n",
+            b.min(100),
+            charging as u8
+        ));
+    }
+    let r = springboard(dev, &req)?;
+    if r != "ok" {
+        bail!("status bar: {r}");
+    }
+    Ok("status bar overridden".into())
 }
 
 /// A fresh phone under the same name: its apps, data and settings gone, as `simctl erase`.

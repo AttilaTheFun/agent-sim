@@ -167,10 +167,61 @@ static void write_front(void) {
 	write_file("front.json", out, strlen(out));
 }
 
-// SpringBoard: requests agent-sim leaves in cmd.txt before the signal ("pasteboard-get", or "pasteboard-set" and the
-// text on the following lines); the answer goes to pasteboard.txt. SpringBoard may read the pasteboard at any time;
-// a background process may not.
-static void pasteboard_request(void) {
+// SpringBoard: requests agent-sim leaves in cmd.txt before the signal; the answer goes to answer.txt.
+//   pasteboard-get                      the general pasteboard's text (SpringBoard may read it at any time; a
+//                                       background process may not)
+//   pasteboard-set\n<text>
+//   statusbar\ntime=9:41\nbattery=100\ncharging=1   override status bar items, as `simctl status_bar override`
+//   statusbar-clear
+static id g_status_publisher;
+static id nsstring(const char *c) {
+	return SEND(id, (id)objc_getClass("NSString"), "stringWithUTF8String:", const char *)(
+		(id)objc_getClass("NSString"), SEL_("stringWithUTF8String:"), c);
+}
+static id alloc_init(const char *cls) {
+	id o = SEND(id, (id)objc_getClass(cls), "alloc")((id)objc_getClass(cls), SEL_("alloc"));
+	return o ? SEND(id, o, "init")(o, SEL_("init")) : nil;
+}
+static const char *status_bar(char *req) {
+	Class pubc = objc_getClass("STStatusBarOverridesStatusDomainPublisher");
+	if (!pubc) return "no StatusKit";
+	if (!g_status_publisher) g_status_publisher = alloc_init("STStatusBarOverridesStatusDomainPublisher");
+	// clearing publishes an empty set of overrides (the domain's emptyData crashed SpringBoard here)
+	bool clear = !strncmp(req, "statusbar-clear", 15);
+	id data = alloc_init("STMutableStatusBarData");
+	long battery = -1;
+	int charging = 0;
+	for (char *line = clear ? NULL : strtok(req, "\n"); line; line = strtok(NULL, "\n")) {
+		char *eq = strchr(line, '=');
+		if (!eq) continue;
+		*eq = 0;
+		const char *k = line, *v = eq + 1;
+		if (!strcmp(k, "time")) {
+			Class sc = objc_getClass("STStatusBarDataStringEntry");
+			id e = SEND(id, (id)sc, "entryWithStringValue:", id)((id)sc, SEL_("entryWithStringValue:"), nsstring(v));
+			SEND(void, data, "setTimeEntry:", id)(data, SEL_("setTimeEntry:"), e);
+			SEND(void, data, "setShortTimeEntry:", id)(data, SEL_("setShortTimeEntry:"), e);
+		} else if (!strcmp(k, "battery")) {
+			battery = atol(v);
+		} else if (!strcmp(k, "charging")) {
+			charging = atoi(v);
+		}
+	}
+	if (battery >= 0) {
+		Class bc = objc_getClass("STStatusBarDataBatteryEntry");
+		id e = SEND(id, (id)bc, "entryWithCapacity:state:saverMode:prominentlyShowsDetailString:detailString:", long, long, bool, bool, id)(
+			(id)bc, SEL_("entryWithCapacity:state:saverMode:prominentlyShowsDetailString:detailString:"), battery, charging ? 1 : 0,
+			false, false, nsstring(""));
+		SEND(void, data, "setMainBatteryEntry:", id)(data, SEL_("setMainBatteryEntry:"), e);
+	}
+	id ov = SEND(id, (id)objc_getClass("STMutableStatusBarOverridesStatusDomainData"), "alloc")(
+		(id)objc_getClass("STMutableStatusBarOverridesStatusDomainData"), SEL_("alloc"));
+	ov = SEND(id, ov, "initWithCustomOverrides:suppressedBackgroundActivityIdentifierListData:", id, id)(
+		ov, SEL_("initWithCustomOverrides:suppressedBackgroundActivityIdentifierListData:"), data, nil);
+	SEND(void, g_status_publisher, "setData:", id)(g_status_publisher, SEL_("setData:"), ov);
+	return "ok";
+}
+static void request(void) {
 	char path[1200];
 	snprintf(path, sizeof path, "%s/cmd.txt", dir);
 	FILE *f = fopen(path, "r");
@@ -180,21 +231,24 @@ static void pasteboard_request(void) {
 	fclose(f);
 	unlink(path);
 	req[n] = 0;
+	if (!strncmp(req, "statusbar", 9)) {
+		const char *r = status_bar(req);
+		write_file("answer.txt", r, strlen(r));
+		return;
+	}
 	id pb = SEND(id, (id)objc_getClass("UIPasteboard"), "generalPasteboard")((id)objc_getClass("UIPasteboard"), SEL_("generalPasteboard"));
 	if (!pb) return;
 	if (!strncmp(req, "pasteboard-set\n", 15)) {
-		id str = SEND(id, (id)objc_getClass("NSString"), "stringWithUTF8String:", const char *)(
-			(id)objc_getClass("NSString"), SEL_("stringWithUTF8String:"), req + 15);
-		SEND(void, pb, "setString:", id)(pb, SEL_("setString:"), str);
-		write_file("pasteboard.txt", "ok", 2);
+		SEND(void, pb, "setString:", id)(pb, SEL_("setString:"), nsstring(req + 15));
+		write_file("answer.txt", "ok", 2);
 	} else if (!strncmp(req, "pasteboard-get", 14)) {
 		const char *t = utf8(get(pb, "string"));
-		write_file("pasteboard.txt", t ? t : "", t ? strlen(t) : 0);
+		write_file("answer.txt", t ? t : "", t ? strlen(t) : 0);
 	}
 }
 
 static void dump(void *ctx) {
-	if (!strcmp(getprogname(), "SpringBoard")) pasteboard_request();
+	if (!strcmp(getprogname(), "SpringBoard")) request();
 	len = 0;
 	emitted = 0;
 	id app = SEND(id, (id)objc_getClass("UIApplication"), "sharedApplication")((id)objc_getClass("UIApplication"), SEL_("sharedApplication"));

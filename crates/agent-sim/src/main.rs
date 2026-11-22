@@ -117,6 +117,19 @@ enum Command {
     },
     /// The phone's clipboard: print it, or set it to TEXT.
     Clipboard { text: Option<String> },
+    /// Override the status bar for clean screenshots (time, battery), or --clear.
+    StatusBar {
+        /// Shown time, e.g. 9:41.
+        #[arg(long)]
+        time: Option<String>,
+        /// Battery percentage.
+        #[arg(long)]
+        battery: Option<u8>,
+        #[arg(long)]
+        charging: bool,
+        #[arg(long, conflicts_with_all = ["time", "battery", "charging"])]
+        clear: bool,
+    },
     /// Record the screen to an MP4.
     Record {
         #[arg(short, long, default_value = "recording.mp4")]
@@ -212,6 +225,18 @@ fn main() -> Result<()> {
         Command::Up => cmd::up(&name),
         Command::Erase => cmd::erase(&name),
         Command::Appearance { mode } => say(cmd::appearance(&dev()?, &mode)),
+        Command::StatusBar {
+            time,
+            battery,
+            charging,
+            clear,
+        } => say(cmd::status_bar(
+            &dev()?,
+            time.as_deref(),
+            battery,
+            charging,
+            clear,
+        )),
         Command::Clipboard { text } => say(cmd::clipboard(&dev()?, text.as_deref())),
         Command::Record { out, secs, fps } => say(cmd::record(
             &dev()?,
