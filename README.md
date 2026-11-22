@@ -48,10 +48,11 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for the plan to 1.0.
 
 agent-sim builds on [x86Sim](https://github.com/x86sim/x86sim), which runs Apple's simulator runtimes on Linux
 through [Darling](https://github.com/darlinghq/darling), [dynarmic](https://github.com/azahar-emu/dynarmic) and
-[metal2vulkan](https://github.com/steelbrain/metal2vulkan).
+[metal2vulkan](https://github.com/steelbrain/metal2vulkan). Fixes agent-sim needs in x86Sim itself live in
+[patches/x86sim](patches/x86sim) until they are upstream.
 
 Apple's runtimes are downloaded from Apple onto your own machine and are never part of this repository.
 
 ## License
 
-[Apache-2.0](LICENSE)
+[Apache-2.0](LICENSE), except the patches in `patches/x86sim`, which follow x86Sim's GPL-3.0-or-later.

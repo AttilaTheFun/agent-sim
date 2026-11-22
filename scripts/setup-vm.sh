@@ -8,6 +8,7 @@
 #   X86SIM_VERSION   x86Sim release (default 0.5.2)
 #   RUNTIME_BUILD    iOS runtime build from Apple's catalogue (default 24B8117, iOS 27.2)
 #   DEVICE, MODEL    the phone to create (default p, "iPhone 17 Pro (at 2x)")
+#   AGENT_SIM_PATCH_X86SIM=0   keep x86Sim's own translator (skips the fixes in patches/x86sim)
 #
 # Apple's iOS runtime is downloaded from Apple onto this machine (about 8 GB) and never leaves it.
 set -Eeuo pipefail
@@ -72,6 +73,12 @@ if [ ! -x "$X" ]; then
 	rm -rf "$tmp"
 fi
 "$X" version
+
+if [ "${AGENT_SIM_PATCH_X86SIM:-1}" = 1 ]; then
+	log "Building x86Sim's translator with agent-sim's fixes (patches/x86sim; web workers in Safari)"
+	# before pre-translating: the pre-translated image is tied to the translator build
+	"$HERE/patch-x86sim.sh"
+fi
 
 fetched=$DATA/runtimes/.agent-sim-fetched-$RUNTIME_BUILD
 if [ ! -e "$fetched" ]; then
@@ -156,7 +163,8 @@ if [[ $(aot_status) != *"(current)"* ]] || [ ! -e "$calm" ] || [ ! -e "$granted"
 		TIMEOUT=1800 "$HERE/phone.sh" wait "$DEVICE"
 		reduce_effects
 		grant_builtin
-		[ -e "$trained" ] || sleep 120
+		# a first phone runs a while so the pre-translation learns what it uses; later phones reuse that image
+		[ -e "$trained" ] || [[ $(aot_status) == *"(current)"* ]] || sleep 120
 		"$HERE/phone.sh" stop "$DEVICE"
 		touch "$trained"
 	fi
