@@ -32,6 +32,9 @@ agent-sim snapshot
 
 From a checkout instead: `cargo build --release`, then `scripts/setup-vm.sh` and `target/release/agent-sim`.
 
+`agent-sim setup --fidelity high --device hifi` adds a phone that looks exactly like Apple's simulator (3x, every
+blur and animation) for screenshots; the default draws at 2x with reduced effects and scrolls twice as fast.
+
 ## Use it from an agent
 
 As an MCP server:

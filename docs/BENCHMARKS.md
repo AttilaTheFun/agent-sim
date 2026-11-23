@@ -82,6 +82,25 @@ costs nearly nothing, but a phone that is scrolling or animating keeps up to six
 (`LP_NUM_THREADS`); set it lower when many phones animate at once. KSM pays off only with several phones: with one
 it just scans, so `scripts/pool.sh` turns it on when it starts two or more.
 
+## Fidelity: fast and high (Zen 5 EPYC 4585PX, 8 vCPU)
+
+`agent-sim setup --fidelity high` makes a phone that looks like Apple's simulator: the iPhone 17 Pro's own 3x and every
+visual effect. The default, fast, draws at 2x with Reduce Transparency and Reduce Motion on. `agent-sim effects
+full|reduced` switches the effects on an existing phone.
+
+| | fast (2x, effects reduced) | high (3x, all effects) |
+|---|---|---|
+| Screen | 804×1748 | 1206×2622 |
+| Boot to home screen | 18-21 s | 14-23 s |
+| App launch, first frame | 0.5 s | 0.5 s |
+| Settings scrolling | 48.9 fps (frame p95 33 ms) | 24.2 fps (frame p95 81 ms) |
+| Touch to first new frame | 39 ms | 54 ms |
+
+High fidelity draws 2.25 times the pixels and every blur, so motion runs at half the rate; static screens, launches and
+`snapshot` cost the same. Use it for screenshots that must match a Mac's, and fast for agents driving apps.
+
+![Control Center: fast (left) and high fidelity (right)](images/fidelity-control-center.jpg)
+
 ## Services for apps under test (Zen 4c EPYC 8224P)
 
 | Services | Boot | CPU at rest | Phone memory |

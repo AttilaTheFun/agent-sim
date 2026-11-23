@@ -8,6 +8,9 @@
 #   X86SIM_VERSION   x86Sim release (default 0.5.2)
 #   RUNTIME_BUILD    iOS runtime build from Apple's catalogue (default 24B8117, iOS 27.2)
 #   DEVICE, MODEL    the phone to create (default p, "iPhone 17 Pro (at 2x)")
+#   FIDELITY=high    a phone that looks exactly like Apple's simulator: the model's own pixel density ("iPhone 17 Pro",
+#                    3x) and every visual effect (blur, transparency, motion). The default, fast, draws at 2x with
+#                    Reduce Transparency and Reduce Motion on: it scrolls faster (docs/BENCHMARKS.md).
 #   AGENT_SIM_PATCH_X86SIM=0   keep x86Sim's own translator (skips the fixes in patches/x86sim)
 #
 # Apple's iOS runtime is downloaded from Apple onto this machine (about 8 GB) and never leaves it.
@@ -16,7 +19,12 @@ set -Eeuo pipefail
 X86SIM_VERSION=${X86SIM_VERSION:-0.5.2}
 RUNTIME_BUILD=${RUNTIME_BUILD:-24B8117}
 DEVICE=${DEVICE:-p}
-MODEL=${MODEL:-"iPhone 17 Pro (at 2x)"}
+FIDELITY=${FIDELITY:-fast}
+case $FIDELITY in
+high) MODEL=${MODEL:-"iPhone 17 Pro"} ;;
+fast) MODEL=${MODEL:-"iPhone 17 Pro (at 2x)"} ;;
+*) echo "setup-vm.sh: FIDELITY is fast or high" >&2; exit 2 ;;
+esac
 ROOT=${AGENT_SIM_HOME:-$HOME/.local/share/agent-sim}
 X=$ROOT/x86sim-$X86SIM_VERSION/AppRun
 DATA=${XDG_DATA_HOME:-$HOME/.local/share}/x86sim
@@ -70,6 +78,20 @@ if [ "${AGENT_SIM_PATCH_X86SIM:-1}" = 1 ]; then
 	"$HERE/patch-x86sim.sh"
 fi
 
+# x86Sim runs Darling either from a root-owned install under /opt/x86sim ("system" mode) or, when the kernel allows
+# unprivileged user namespaces, through a namespace holder process ("userns" mode). In userns mode the first boot
+# after the holder is (re)created stalls (x86Sim's docs/RELEASE.md), which happened after every VM restart; system
+# mode has no holder. x86Sim picks system mode whenever this install is present. After patching, so it carries the
+# patched translator.
+S=$ROOT/x86sim-$X86SIM_VERSION/usr/share/x86sim
+if [ "$(cat /opt/x86sim/darling/.x86sim-complete 2>/dev/null)" != "$(cat "$S/DARLING_ID")" ] &&
+	sudo -n true 2>/dev/null; then
+	log "Installing Darling for x86Sim's system mode (/opt/x86sim, root-owned)"
+	sudo sh "$S/install-helper.sh" install "$S/darling" "$(cat "$S/DARLING_ID")"
+	# a holder left from userns mode would keep being used by phones started before
+	for f in "$HOME"/.cache/x86sim/userns-*.pid; do [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null; rm -f "$f"; done
+fi
+
 fetched=$DATA/runtimes/.agent-sim-fetched-$RUNTIME_BUILD
 if [ ! -e "$fetched" ]; then
 	log "Downloading the iOS runtime $RUNTIME_BUILD from Apple (about 8 GB)"
@@ -113,11 +135,17 @@ DIR=$DATA/var/device-a64-$DEVICE
 trained=$DIR/.agent-sim-trained
 calm=$DIR/.agent-sim-settings-2
 RUNTIME_ROOT=$(ls -d "$DATA"/runtimes/*-"$RUNTIME_BUILD"-arm64/extracted/Library/Developer/CoreSimulator/Profiles/Runtimes/*.simruntime/Contents/Resources/RuntimeRoot | head -1)
-# Reduce Transparency and Reduce Motion: blurs and long animations are the costliest things to draw on a CPU. And
-# app accessibility, as Accessibility Inspector turns it on in Apple's simulator: UIKit then describes every control,
-# which `agent-sim snapshot` reads.
+# Reduce Transparency and Reduce Motion (fast only): blurs and long animations are the costliest things to draw on a
+# CPU. And app accessibility, as Accessibility Inspector turns it on in Apple's simulator: UIKit then describes every
+# control, which `agent-sim snapshot` reads.
 reduce_effects() {
-	for key in ReduceMotionEnabled EnhancedBackgroundContrastEnabled ApplicationAccessibilityEnabled AccessibilityEnabled; do
+	local reduce=true
+	[ "$FIDELITY" = high ] && reduce=false
+	for key in ReduceMotionEnabled EnhancedBackgroundContrastEnabled; do
+		(cd "$DATA" && X86SIM_DEVICE=$DIR "$X" x86sim spawn "$RUNTIME_ROOT/usr/bin/defaults" \
+			write com.apple.Accessibility "$key" -bool $reduce >/dev/null)
+	done
+	for key in ApplicationAccessibilityEnabled AccessibilityEnabled; do
 		(cd "$DATA" && X86SIM_DEVICE=$DIR "$X" x86sim spawn "$RUNTIME_ROOT/usr/bin/defaults" \
 			write com.apple.Accessibility "$key" -bool true >/dev/null)
 	done

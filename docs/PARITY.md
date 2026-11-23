@@ -28,8 +28,8 @@ So differences come in three kinds, and each is handled differently:
    root owner on Darling's launcher after a VM restore (no boot).
 2. **Missing features**: what CoreSimulator and SimulatorBridge provide on a Mac and nobody had built here
    (dark mode, status bar overrides, the clipboard...). These are agent-sim commands.
-3. **Trade-offs**: agent-sim's defaults trade some fidelity for speed (2x rendering, reduced effects). These become
-   options.
+3. **Trade-offs**: agent-sim's defaults trade some fidelity for speed (2x rendering, reduced effects); `setup
+   --fidelity high` and `effects full` turn them off.
 
 ## Matrix
 
@@ -96,13 +96,12 @@ Status: **same** as on a Mac, **close** (works, with a noted difference), **gap*
 | Boot to home screen | a few seconds | 12–13 s on Zen 5, 25–40 s on Zen 4c / Zen 3 |
 | Scrolling | 60–120 fps | about 55 fps on Zen 5 |
 | Touch to screen | a frame or two | about 14 ms on Zen 5 |
-| Rendering | 3x, all effects | 2x with Reduce Transparency and Reduce Motion by default |
+| Rendering | 3x, all effects | 2x with Reduce Transparency and Reduce Motion by default; `setup --fidelity high` for 3x and all effects (half the scrolling frame rate) |
 | `snapshot` | (none) | 35 ms home screen, 60 ms Settings, about 0.5 s a long web page (settled, Zen 5); seconds while the phone is busy |
 
 ## Next, in order
 
-1. A fidelity option: 3x and full effects, measured, for screenshots that must match a Mac's.
-2. The software keyboard (show it as Cmd-K does on a Mac), and status bar signal bars.
-3. XCTest and XCUITest runs, so existing UI test suites run unchanged.
-4. A debugger story (lldb, Web Inspector).
-5. Siri, Maps tiles (x86Sim's `fetch-macos-host.sh` provides the map data from a Mac), and device cloning.
+1. The software keyboard (show it as Cmd-K does on a Mac), and status bar signal bars.
+2. XCTest and XCUITest runs, so existing UI test suites run unchanged.
+3. A debugger story (lldb, Web Inspector).
+4. Siri, Maps tiles (x86Sim's `fetch-macos-host.sh` provides the map data from a Mac), and device cloning.

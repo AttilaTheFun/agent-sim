@@ -22,6 +22,9 @@
 #                             nanoregistryd, accounts, media).
 #   AGENT_SIM_HOOKS=1         load agent-sim's hooks (hooks/prebuilt) into SpringBoard
 #   AGENT_SIM_KSM=1           share identical memory pages with other phones (KSM, when the kernel's is on)
+#   X86SIM_IO_MAX=0           x86Sim's desktop throttle off: by default it runs the phone in a scope with disk reads
+#                             and writes capped at 40 MB/s and low CPU and IO weight, which on a server only slows
+#                             cold boots (and moves the phone out of this unit's accounting)
 # The frame ring lives under ~/.cache rather than /run/user: x86Sim's container does not always see the host's
 # /run/user (no login session on a server), and then no frame ever reaches the host.
 set -Eeuo pipefail
@@ -103,25 +106,21 @@ ensure_penv() {
 	echo "SpringBoard DYLD_INSERT_LIBRARIES=${base:+$base:}$h/libagentsim-ax.dylib:$h/libagentsim-springboard.dylib${AGENT_SIM_SB_EXTRA:+:$AGENT_SIM_SB_EXTRA}$log" >>"$PENV"
 }
 
-# x86Sim starts Darling through a setuid-root launcher. A VM restored from an archive or a disk copy can keep the
-# setuid bit but lose the root owner; x86Sim then falls back to its user-namespace mode, where the phone never came
-# up on these VMs (no Darling processes, no frames). Put the owner back when sudo allows it.
-fix_launcher() {
-	local l
-	for l in "$DATA"/app/"$X86SIM_VERSION"*/darling/bin/darling; do
-		[ -f "$l" ] && [ -u "$l" ] && [ "$(stat -c %u "$l")" != 0 ] || continue
-		if sudo -n chown root:root "$l" 2>/dev/null && sudo -n chmod 4755 "$l"; then
-			echo "phone.sh: gave Darling's launcher back to root ($l)" >&2
-		else
-			echo "phone.sh: Darling's launcher $l is not owned by root; run: sudo chown root:root $l && sudo chmod 4755 $l" >&2
-		fi
-	done
+# Darling's prefix (the container's root overlay, a cache) is made for one of x86Sim's two modes: one from the
+# user-namespace mode is owned by the user, and system-mode Darling refuses it ("workdir/private must be a directory
+# that only root can use"). A prefix from the other mode is removed; Darling makes a new one.
+fix_prefix() {
+	local pre=$HOME/.cache/x86sim/a64prefix-$DEVICE
+	[ -e /opt/x86sim/darling/.x86sim-complete ] || return 0
+	[ -d "$pre.workdir/private" ] && [ "$(stat -c %u "$pre.workdir/private")" != 0 ] || return 0
+	echo "phone.sh: $DEVICE's Darling prefix is from x86Sim's user-namespace mode; making a new one" >&2
+	rm -rf "$pre" "$pre.workdir" 2>/dev/null || sudo -n rm -rf "$pre" "$pre.workdir"
 }
 
 case $ACTION in
 start)
-	fix_launcher
 	stop_phone
+	fix_prefix
 	ensure_penv
 	mkdir -p "$RINGS"
 	# a ring left from the last boot would look like a home screen already drawn
@@ -132,7 +131,7 @@ start)
 	passthrough=()
 	while IFS='=' read -r name _; do
 		case $name in
-		X86SIM_METAL | LP_NUM_THREADS | A64_JOBS | VK_ICD_FILENAMES | SIMFB_RING) ;;
+		X86SIM_METAL | LP_NUM_THREADS | A64_JOBS | VK_ICD_FILENAMES | SIMFB_RING | X86SIM_IO_MAX) ;;
 		X86SIM_* | A64_* | LP_* | VK_* | MESA_* | SIMFB_*) passthrough+=(--setenv="$name") ;;
 		esac
 	done < <(env)
@@ -148,18 +147,50 @@ start)
 		--setenv=X86SIM_METAL="${X86SIM_METAL:-backboardd,iconservicesagent}" \
 		--setenv=LP_NUM_THREADS="${LP_NUM_THREADS:-$(n=$(($(nproc) - 2)); echo $((n < 2 ? 2 : n > 6 ? 6 : n)))}" \
 		--setenv=A64_JOBS="${A64_JOBS:-slim}" \
+		--setenv=X86SIM_IO_MAX="${X86SIM_IO_MAX:-0}" \
 		--setenv=VK_ICD_FILENAMES="${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json}" \
 		"$X" shell -c "A64_DEVICE=$DIR A64_KEEP=1 SECS=7200 cli/libexec/arm64/boot-a64.sh ${AGENT_SIM_EXTRA_JOBS-$DEFAULT_EXTRA_JOBS}"
 	echo "phone.sh: starting $DEVICE (journalctl --user -u $UNIT)"
 	;;
 wait)
+	# A boot can stall for good: the screen stays on the Apple logo, SpringBoard waits on a service that never answers
+	# and the phone's processes use no CPU (seen on the first boot after a VM restart, and on a new phone). A stall
+	# (not home yet, under a second of CPU in 30 s) restarts the phone once.
 	start=$(date +%s)
-	until [ -e "$RING" ]; do
-		systemctl --user is-active --quiet "$UNIT" || { echo "phone.sh: $DEVICE is not running" >&2; exit 1; }
-		sleep 0.5
+	restarted=0
+	prev=""
+	while :; do
+		ring_wait=$(date +%s)
+		until [ -e "$RING" ]; do
+			systemctl --user is-active --quiet "$UNIT" || { echo "phone.sh: $DEVICE is not running" >&2; exit 1; }
+			# no first frame in 3 minutes: Darling never came up
+			if [ $(($(date +%s) - ring_wait)) -gt 180 ]; then
+				[ "$restarted" = 0 ] || { echo "phone.sh: $DEVICE: Darling did not start" >&2; exit 1; }
+				echo "phone.sh: $DEVICE shows no frame after 3 minutes; restarting it" >&2
+				"$0" start "$DEVICE" >/dev/null
+				restarted=1
+				ring_wait=$(date +%s)
+			fi
+			sleep 0.5
+		done
+		if X86SIM_DEVICE=$DIR SIMFB_RING_LINUX=$RING "$X" x86sim wait home 30 >/dev/null 2>&1; then
+			echo "phone.sh: $DEVICE home screen after $(($(date +%s) - start)) s"
+			exit 0
+		fi
+		systemctl --user is-active --quiet "$UNIT" || { echo "phone.sh: $DEVICE stopped while booting" >&2; exit 1; }
+		[ $(($(date +%s) - start)) -lt "${TIMEOUT:-900}" ] || { echo "phone.sh: $DEVICE: no home screen after ${TIMEOUT:-900} s" >&2; exit 1; }
+		cpu=$(systemctl --user show -p CPUUsageNSec --value "$UNIT" 2>/dev/null || true)
+		cpu=${cpu//[^0-9]/}
+		cpu=${cpu:-0}
+		if [ -n "$prev" ] && [ "$cpu" -gt 0 ] && [ $((cpu - prev)) -lt 1000000000 ] && [ "$restarted" = 0 ]; then
+			echo "phone.sh: $DEVICE stalled while booting (no CPU used for 30 s); restarting it" >&2
+			"$0" start "$DEVICE" >/dev/null
+			restarted=1
+			prev=""
+			continue
+		fi
+		prev=$cpu
 	done
-	X86SIM_DEVICE=$DIR SIMFB_RING_LINUX=$RING "$X" x86sim wait home "${TIMEOUT:-900}" >/dev/null
-	echo "phone.sh: $DEVICE home screen after $(($(date +%s) - start)) s"
 	;;
 stop)
 	stop_phone

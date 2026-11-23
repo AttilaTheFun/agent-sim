@@ -33,8 +33,23 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Set this machine up: x86Sim, Apple's iOS runtime (about 8 GB, from Apple) and a first phone. Re-runnable.
-    Setup,
+    /// Set this machine up: x86Sim, Apple's iOS runtime (about 8 GB, from Apple) and a phone. Re-runnable; with
+    /// --device, adds another phone.
+    Setup {
+        /// fast: drawn at 2x with Reduce Transparency and Reduce Motion (scrolls faster). high: the model's own 3x
+        /// and every visual effect, as Apple's simulator shows it.
+        #[arg(long, default_value = "fast", value_parser = ["fast", "high"])]
+        fidelity: String,
+        /// Device model, e.g. "iPhone 17 Pro" (`x86sim device models` lists them).
+        #[arg(long)]
+        model: Option<String>,
+    },
+    /// Visual effects (blur, transparency, motion): full, as on a device, or reduced, which draws faster. Restarts
+    /// the phone if it runs.
+    Effects {
+        #[arg(value_parser = ["full", "reduced"])]
+        mode: String,
+    },
     /// Boot the phone and wait for its home screen.
     Up,
     /// Shut the phone down.
@@ -221,7 +236,14 @@ fn main() -> Result<()> {
     let name = phone::pick_device(cli.device.as_deref());
     let dev = || device::Device::find(&name);
     match cli.command {
-        Command::Setup => phone::script("setup-vm.sh", &[], &[("DEVICE", name.as_str())]),
+        Command::Setup { fidelity, model } => {
+            let mut env = vec![("DEVICE", name.as_str()), ("FIDELITY", fidelity.as_str())];
+            if let Some(m) = &model {
+                env.push(("MODEL", m.as_str()));
+            }
+            phone::script("setup-vm.sh", &[], &env)
+        }
+        Command::Effects { mode } => say(cmd::effects(&name, &mode)),
         Command::Pool { args } => {
             let a: Vec<&str> = args.iter().map(String::as_str).collect();
             phone::script("pool.sh", &a, &[])

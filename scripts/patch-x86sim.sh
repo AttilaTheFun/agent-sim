@@ -16,13 +16,20 @@ PATCHES=$HERE/../patches/x86sim
 SRC=$ROOT/src/x86sim-$X86SIM_VERSION
 BUILD=$ROOT/build/arm64jit-$X86SIM_VERSION
 DATA=${XDG_DATA_HOME:-$HOME/.local/share}/x86sim
-# the unpacked AppImage, and the copy x86Sim installs under its data directory on first run (the one phones load)
+# the unpacked AppImage, the copy x86Sim installs under its data directory on first run (userns mode), and the
+# root-owned system-mode install under /opt/x86sim (the one phones load when it exists)
 mapfile -t LIBS < <(find "$ROOT/x86sim-$X86SIM_VERSION" "$DATA"/app/"$X86SIM_VERSION"* -name libarm64jit.so \
 	-path '*libexec/darling*' 2>/dev/null)
+OPT_LIB=$(readlink -f /opt/x86sim/darling 2>/dev/null || true)/libexec/darling/usr/libexec/darling/libarm64jit.so
+if [ -f "$OPT_LIB" ]; then LIBS+=("$OPT_LIB"); fi
 [ ${#LIBS[@]} -gt 0 ] || { echo "patch-x86sim.sh: x86Sim $X86SIM_VERSION is not installed; run scripts/setup-vm.sh" >&2; exit 1; }
 
 if [ "${1:-}" = restore ]; then
-	for lib in "${LIBS[@]}"; do [ -e "$lib.orig" ] && cp "$lib.orig" "$lib.new" && mv -f "$lib.new" "$lib"; done
+	for lib in "${LIBS[@]}"; do
+		sudo_=""
+		[ -w "$(dirname "$lib")" ] || sudo_="sudo"
+		[ -e "$lib.orig" ] && $sudo_ cp "$lib.orig" "$lib.new" && $sudo_ mv -f "$lib.new" "$lib"
+	done
 	exit 0
 fi
 
@@ -51,7 +58,9 @@ nice ninja -C "$BUILD" -j"$(nproc)" arm64jit >/dev/null
 cat "$PATCHES"/*.patch | sha256sum >"$BUILD/patches.sha"
 # replaced by rename: running phones keep the library they loaded until they restart
 for lib in "${LIBS[@]}"; do
-	[ -e "$lib.orig" ] || cp "$lib" "$lib.orig"
-	cp "$BUILD/libarm64jit.so" "$lib.new" && mv -f "$lib.new" "$lib"
+	sudo_=""
+	[ -w "$(dirname "$lib")" ] || sudo_="sudo"
+	[ -e "$lib.orig" ] || $sudo_ cp "$lib" "$lib.orig"
+	$sudo_ cp "$BUILD/libarm64jit.so" "$lib.new" && $sudo_ mv -f "$lib.new" "$lib"
 	echo "patch-x86sim.sh: installed the patched translator in $lib"
 done

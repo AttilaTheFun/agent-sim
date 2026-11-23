@@ -563,6 +563,37 @@ fn springboard(dev: &Device, req: &str) -> Result<String> {
     }
 }
 
+/// Visual effects on or off (Reduce Transparency and Reduce Motion), restarting a running phone so every app
+/// draws with the new setting.
+pub fn effects(name: &str, mode: &str) -> Result<String> {
+    let dev = Device::find(name)?;
+    let reduce = match mode {
+        "full" => "false",
+        "reduced" => "true",
+        _ => bail!("effects full or reduced"),
+    };
+    let defaults = runtime_root()?.join("usr/bin/defaults");
+    for key in ["ReduceMotionEnabled", "EnhancedBackgroundContrastEnabled"] {
+        phone::x86sim_ok(
+            &dev,
+            &[
+                "spawn",
+                &defaults.to_string_lossy(),
+                "write",
+                "com.apple.Accessibility",
+                key,
+                "-bool",
+                reduce,
+            ],
+        )?;
+    }
+    if phone::is_running(&dev) {
+        up(name)?;
+        return Ok(format!("effects {mode}; phone restarted"));
+    }
+    Ok(format!("effects {mode}"))
+}
+
 /// The general pasteboard, through SpringBoard (a background process may not read it): `None` reads it.
 pub fn clipboard(dev: &Device, set: Option<&str>) -> Result<String> {
     match set {
