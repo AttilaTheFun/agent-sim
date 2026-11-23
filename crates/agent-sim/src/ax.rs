@@ -253,7 +253,9 @@ pub fn snapshot(dev: &Device) -> Result<Snapshot> {
     let dir = phone::data_dir(dev).join("tmp/agent-sim");
     std::fs::create_dir_all(&dir)?;
     let sb = phone::process_ids(dev, |_, exe| exe == "SpringBoard")?;
-    let sb = *sb.first().context("the phone is not running")?;
+    let Some(&sb) = sb.first() else {
+        return Err(phone::not_running(dev));
+    };
     let _ = std::fs::remove_file(dir.join("front.json"));
     let springboard = dump(&dir, sb, "ax-springboard.json", Duration::from_secs(5))?;
     wait_for(&dir.join("front.json"), Duration::from_secs(2))?;

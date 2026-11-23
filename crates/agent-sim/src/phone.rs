@@ -224,10 +224,75 @@ pub fn pick_device(name: Option<&str>) -> String {
         .unwrap_or_else(|| "p".into())
 }
 
-pub fn is_running(dev: &Device) -> bool {
-    processes(dev, |_, exe| exe == "SpringBoard")
+/// Whether a phone is up, down, or down without having been stopped.
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub enum Health {
+    Running,
+    Stopped,
+    /// Darling's server exited while the phone ran: every process left freezes or goes, and no frame is drawn
+    Crashed,
+}
+
+/// The device's short name (`p` for `device-a64-p`), as phone.sh and x86Sim's prefix name it.
+fn short_name(dev: &Device) -> String {
+    let n = dev.dir.file_name().unwrap_or_default().to_string_lossy();
+    n.strip_prefix("device-a64-").unwrap_or(&n).to_string()
+}
+
+/// Whether the device's Darling server runs (`darlingserver <prefix> ...`).
+fn server_running(dev: &Device) -> bool {
+    let Some(home) = std::env::var_os("HOME") else {
+        return false;
+    };
+    let prefix = Path::new(&home).join(format!(".cache/x86sim/a64prefix-{}", short_name(dev)));
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    dir.flatten().any(|e| {
+        let Ok(cmd) = std::fs::read(e.path().join("cmdline")) else {
+            return false;
+        };
+        let mut args = cmd.split(|&b| b == 0);
+        let exe = args.next().unwrap_or_default();
+        exe.ends_with(b"darlingserver")
+            && args.next() == Some(prefix.as_os_str().as_encoded_bytes())
+    })
+}
+
+pub fn health(dev: &Device) -> Health {
+    let springboard = processes(dev, |_, exe| exe == "SpringBoard")
         .map(|v| !v.is_empty())
-        .unwrap_or(false)
+        .unwrap_or(false);
+    let server = server_running(dev);
+    if springboard && server {
+        return Health::Running;
+    }
+    let unit_active = Command::new("systemctl")
+        .args(["--user", "is-active", "--quiet"])
+        .arg(format!("agent-sim-phone-{}", short_name(dev)))
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if (springboard || unit_active) && !server {
+        Health::Crashed
+    } else {
+        Health::Stopped
+    }
+}
+
+pub fn is_running(dev: &Device) -> bool {
+    health(dev) == Health::Running
+}
+
+/// Why the phone cannot answer: stopped, or crashed (and how to get it back).
+pub fn not_running(dev: &Device) -> anyhow::Error {
+    match health(dev) {
+        Health::Crashed => anyhow::anyhow!(
+            "the phone stopped: its Darling server exited (a known x86Sim/Darling issue, docs/KNOWN_ISSUES.md); \
+             `agent-sim up` restarts it"
+        ),
+        _ => anyhow::anyhow!("the phone is not running (`agent-sim up` starts it)"),
+    }
 }
 
 /// Where agent-sim keeps per-phone state on the host (element references from the last snapshot).

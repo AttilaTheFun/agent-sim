@@ -2,6 +2,13 @@
 
 **iOS simulators for AI agents, on ordinary Linux machines.** No Mac, no GPU.
 
+<p align="center"><img src="docs/images/dino.gif" width="540" alt="The dino game in Safari on an iOS simulator running on a Linux VM, played by a script that reads the screen and taps"></p>
+
+<p align="center">Safari on Apple's iOS runtime, on a Linux VM, recorded at 60 fps (the GIF is 15).
+<a href="https://github.com/Developing-Gamer/agent-sim/releases/download/v0.1.0/dino.mp4">Full clip</a> ·
+<a href="https://github.com/Developing-Gamer/agent-sim/releases/download/v0.1.0/agent-sim-demo.mp4">An agent driving
+Settings and Safari</a></p>
+
 agent-sim runs Apple's iOS simulator runtime on an x86-64 Linux VM and gives agents what they need to test iOS
 apps: install an `.ipa`, read the screen as text, tap, type, scroll, and watch it live in a browser. One command line
 for scripts and CI, and an MCP server for Claude Code, Cursor, Codex and other agents.

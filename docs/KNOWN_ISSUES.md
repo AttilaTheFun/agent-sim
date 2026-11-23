@@ -52,8 +52,8 @@ itself is stuck; `agent-sim terminate com.apple.mobilesafari`, then `agent-sim o
 Seen twice in about six hours of heavy use: every app and service freezes and no new frame is drawn (the stream and
 `record` show a still picture, `snapshot` and `launch` time out). Darling's server process has exited, with no crash in
 the kernel log, no core and nothing in its own log (with `DSERVER_LOG_CATEGORIES=dtape`, which `phone.sh` now passes
-through, its last entries were RunningBoard resuming a process). x86Sim's launcher keeps running, so `agent-sim status`
-still says running. `agent-sim down && agent-sim up` brings the phone back in about 20 s. Cause not found yet.
+through, its last entries were RunningBoard resuming a process). `agent-sim status` reports the phone as crashed, and the
+commands that read the screen say so; `agent-sim up` brings it back in about 20 s. Cause not found yet.
 
 ### `snapshot` is slow while the phone is busy
 

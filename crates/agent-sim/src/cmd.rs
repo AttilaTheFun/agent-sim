@@ -37,10 +37,12 @@ pub fn status() -> Result<()> {
             .ok()
             .and_then(|m| m.get("SIMULATOR_MODEL_IDENTIFIER").cloned())
             .unwrap_or_default();
-        let state = if phone::is_running(&dev) {
-            "running"
-        } else {
-            "stopped"
+        let state = match phone::health(&dev) {
+            phone::Health::Running => "running",
+            phone::Health::Stopped => "stopped",
+            phone::Health::Crashed => {
+                "crashed (Darling's server exited; `agent-sim up` restarts it)"
+            }
         };
         println!("{name}\t{state}\t{model}");
     }
@@ -572,7 +574,9 @@ fn springboard(dev: &Device, req: &str) -> Result<String> {
     let _ = std::fs::remove_file(&answer);
     std::fs::write(dir.join("cmd.txt"), req)?;
     let sb = phone::process_ids(dev, |_, exe| exe == "SpringBoard")?;
-    let (linux, inner) = *sb.first().context("the phone is not running")?;
+    let Some(&(linux, inner)) = sb.first() else {
+        return Err(phone::not_running(dev));
+    };
     phone::ask_hook(&dir, linux, inner).context("SpringBoard is still starting")?;
     let start = Instant::now();
     loop {

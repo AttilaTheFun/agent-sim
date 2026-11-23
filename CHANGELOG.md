@@ -6,6 +6,9 @@
   processes still starting, which ended them; now only processes whose hook is ready are asked.
 - `open` checks that Safari started for a web link and asks again once if it did not.
 - `phone.sh` passes Darling's `DSERVER_*` log settings through to the phone.
+- `status` reports a phone whose Darling server exited as crashed, and commands that read the screen say how to
+  restart it, instead of timing out.
+- The README opens with the dino-game clip.
 
 ## 0.1.0
 
