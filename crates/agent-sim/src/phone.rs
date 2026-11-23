@@ -113,6 +113,16 @@ pub fn process_ids(dev: &Device, pick: impl Fn(u32, &str) -> bool) -> Result<Vec
     Ok(out)
 }
 
+/// Asks a phone process to read a request from agent-sim's hook (SIGUSR2). `inner` is its pid inside the phone. Only
+/// once the hook has set up its handler, which it marks with `hooked-<inner>` in `dir`: until then SIGUSR2 would
+/// end the process (an app or WebContent process still starting).
+pub fn ask_hook(dir: &Path, linux: u32, inner: u32) -> Result<()> {
+    if !dir.join(format!("hooked-{inner}")).exists() {
+        bail!("process {inner} is still starting");
+    }
+    signal(linux, libc::SIGUSR2)
+}
+
 pub fn signal(pid: u32, sig: i32) -> Result<()> {
     // SAFETY: kill(2) with a pid we just read from /proc and a valid signal number; no memory is shared.
     #[allow(unsafe_code)]

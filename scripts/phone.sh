@@ -132,7 +132,7 @@ start)
 	while IFS='=' read -r name _; do
 		case $name in
 		X86SIM_METAL | LP_NUM_THREADS | A64_JOBS | VK_ICD_FILENAMES | SIMFB_RING | X86SIM_IO_MAX) ;;
-		X86SIM_* | A64_* | LP_* | VK_* | MESA_* | SIMFB_*) passthrough+=(--setenv="$name") ;;
+		X86SIM_* | A64_* | LP_* | VK_* | MESA_* | SIMFB_* | DSERVER_*) passthrough+=(--setenv="$name") ;;
 		esac
 	done < <(env)
 	# let the kernel merge this phone's memory pages with identical ones of other phones (KSM; takes effect while

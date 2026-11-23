@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Web pages no longer stay blank, and `open` brings Safari up after it was quit: reading the screen sent SIGUSR2 to
+  processes still starting, which ended them; now only processes whose hook is ready are asked.
+- `open` checks that Safari started for a web link and asks again once if it did not.
+- `phone.sh` passes Darling's `DSERVER_*` log settings through to the phone.
+
 ## 0.1.0
 
 First release.

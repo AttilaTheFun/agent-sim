@@ -262,7 +262,9 @@ fn insert_text(dev: &Device, text: &str) -> Result<bool> {
         dir.join(format!("cmd-{pid}.txt")),
         format!("insert\n{text}"),
     )?;
-    phone::signal(linux, libc::SIGUSR2)?;
+    if phone::ask_hook(&dir, linux, pid).is_err() {
+        return Ok(false);
+    }
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(3) {
         if let Ok(a) = std::fs::read_to_string(&answer) {
@@ -337,7 +339,33 @@ pub fn terminate(dev: &Device, bundle: &str) -> Result<String> {
 }
 
 pub fn open_url(dev: &Device, url: &str) -> Result<String> {
-    phone::x86sim_ok(dev, &["openurl", url])?;
+    const SAFARI: &str = "com.apple.mobilesafari";
+    let web = url.starts_with("http://") || url.starts_with("https://");
+    for attempt in 0..2 {
+        phone::x86sim_ok(dev, &["openurl", url])?;
+        if !web {
+            break;
+        }
+        // a web link starts Safari when it is not running; make sure it did (and still runs), else ask again
+        let start = Instant::now();
+        let mut up = false;
+        while start.elapsed() < Duration::from_secs(10) {
+            if phone::x86sim_run(dev, &["pidof", SAFARI])?.status.success() {
+                up = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        if up {
+            std::thread::sleep(Duration::from_millis(1000));
+            if phone::x86sim_run(dev, &["pidof", SAFARI])?.status.success() {
+                break;
+            }
+        }
+        if attempt == 1 {
+            bail!("Safari did not start for {url}");
+        }
+    }
     Ok(format!("opened {url}"))
 }
 
@@ -543,11 +571,9 @@ fn springboard(dev: &Device, req: &str) -> Result<String> {
     let answer = dir.join("answer.txt");
     let _ = std::fs::remove_file(&answer);
     std::fs::write(dir.join("cmd.txt"), req)?;
-    let sb = phone::processes(dev, |_, exe| exe == "SpringBoard")?;
-    phone::signal(
-        *sb.first().context("the phone is not running")?,
-        libc::SIGUSR2,
-    )?;
+    let sb = phone::process_ids(dev, |_, exe| exe == "SpringBoard")?;
+    let (linux, inner) = *sb.first().context("the phone is not running")?;
+    phone::ask_hook(&dir, linux, inner).context("SpringBoard is still starting")?;
     let start = Instant::now();
     loop {
         if let Ok(t) = std::fs::read_to_string(&answer) {

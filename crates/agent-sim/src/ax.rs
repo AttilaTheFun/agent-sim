@@ -127,7 +127,12 @@ fn sent_stamp() -> String {
     format!("{:.0}", t.as_secs_f64() * 1e3)
 }
 
-fn dump(dir: &Path, linux_pid: u32, name: &str, timeout: Duration) -> Result<RawDump> {
+fn dump(
+    dir: &Path,
+    (linux_pid, inner): (u32, u32),
+    name: &str,
+    timeout: Duration,
+) -> Result<RawDump> {
     let file = dir.join(name);
     let _ = std::fs::remove_file(&file);
     if let Some(p) = name
@@ -138,7 +143,7 @@ fn dump(dir: &Path, linux_pid: u32, name: &str, timeout: Duration) -> Result<Raw
             let _ = std::fs::write(dir.join(format!("req-{p}")), sent_stamp());
         }
     }
-    phone::signal(linux_pid, libc::SIGUSR2)?;
+    phone::ask_hook(dir, linux_pid, inner)?;
     let text = wait_for(&file, timeout)?;
     serde_json::from_str(&text).with_context(|| format!("reading {}", file.display()))
 }
@@ -193,7 +198,7 @@ fn read_web(
     for &(linux, inner) in procs {
         // the hook's watcher thread picks this up within 150 ms; the signal is the fast path when it gets through
         let _ = std::fs::write(dir.join(format!("req-{inner}")), sent_stamp());
-        let _ = phone::signal(linux, libc::SIGUSR2);
+        let _ = phone::ask_hook(dir, linux, inner);
     }
     let mut pending: Vec<usize> = (0..procs.len()).collect();
     let mut out = Vec::new();
@@ -247,7 +252,7 @@ fn read_web(
 pub fn snapshot(dev: &Device) -> Result<Snapshot> {
     let dir = phone::data_dir(dev).join("tmp/agent-sim");
     std::fs::create_dir_all(&dir)?;
-    let sb = phone::processes(dev, |_, exe| exe == "SpringBoard")?;
+    let sb = phone::process_ids(dev, |_, exe| exe == "SpringBoard")?;
     let sb = *sb.first().context("the phone is not running")?;
     let _ = std::fs::remove_file(dir.join("front.json"));
     let springboard = dump(&dir, sb, "ax-springboard.json", Duration::from_secs(5))?;
@@ -259,7 +264,12 @@ pub fn snapshot(dev: &Device) -> Result<Snapshot> {
             let pids = phone::processes(dev, |inner, _| inner == p)?;
             match pids.first() {
                 Some(&linux) => {
-                    match dump(&dir, linux, &format!("ax-{p}.json"), Duration::from_secs(3)) {
+                    match dump(
+                        &dir,
+                        (linux, p),
+                        &format!("ax-{p}.json"),
+                        Duration::from_secs(3),
+                    ) {
                         Ok(d) => Some(d),
                         Err(_) => {
                             app_not_answering = true;

@@ -453,6 +453,10 @@ static void start(void) {
 	dispatch_source_t s = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR2, 0, dispatch_get_main_queue());
 	dispatch_source_set_event_handler_f(s, dump);
 	dispatch_resume(s);
+	// SIGUSR2's default action ends the process: the CLI signals only processes that have this file
+	char ready[32];
+	snprintf(ready, sizeof ready, "hooked-%d", getpid());
+	write_file(ready, "1", 1);
 }
 // An idle WebContent process took seconds to run work queued for its main thread (its run loop did not wake for
 // the main dispatch queue), so there a thread looks for a request file (req-<pid>) every 150 ms, puts the work on
@@ -502,4 +506,8 @@ static void added(const struct mach_header *mh, intptr_t slide) {
 		start();
 	}
 }
-__attribute__((constructor)) static void init(void) { _dyld_register_func_for_add_image(added); }
+__attribute__((constructor)) static void init(void) {
+	// a process that is not an app or WebContent never answers; one that is answers once start() has run
+	signal(SIGUSR2, SIG_IGN);
+	_dyld_register_func_for_add_image(added);
+}

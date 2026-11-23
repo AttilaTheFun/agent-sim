@@ -20,6 +20,7 @@ x86Sim are reported there with the evidence below.
 | News stays black; any app with a crash reporter runs very slowly | An app's `SIGSEGV` handler made Darling replace x86Sim's fault handler, so every routine translator fault (Swift's tagged pointers are non-canonical addresses on x86-64) cost a darlingserver round trip; News' startup spun in Swift string code at a few hundred iterations a second | `patches/x86sim/0002-keep-the-fault-handler-after-guest-sigaction.patch` |
 | A permission prompt stays on screen after the app that asked quits or crashes | Darling delivers a Mach dead-name notification within a process but loses it when the port's owner is another process that died. SpringBoard watches the prompt's reply port for that notification and tccd watches the asking app's connection the same way, so neither noticed | `hooks/springboard.c`, loaded into SpringBoard by `phone.sh`, checks each alert once a second and cancels it when the process that posted it, or the app a permission prompt names, is gone. tccd records the canceled prompt as "denied, prompt canceled" (reason 13); reset with `x86sim privacy reset` |
 | Built-in apps' permission prompts get in the way of other apps | a prompt stays up over every app until answered, as on iOS | `setup-vm.sh` grants the built-in apps their permissions up front, as on a phone that has been set up; apps you install still ask |
+| Web pages stayed blank (or froze) for good; `agent-sim open` after Safari had quit left the home screen; an app read right after it launched sometimes died | `snapshot` (and `wait`, `type` and the other commands that read the screen) asked processes for their elements with SIGUSR2, whose default action ends a process. A process that was still starting, before the hook had installed its handler, was killed: Safari when `wait` polled right after `open` started it, and the WebContent process Safari starts for each new site while the page loaded. Safari does not notice a dead WebContent process (the lost dead-name notifications below), so its page stayed blank. Measured: 0 of 5 `open`s after quitting Safari came up; 11 WebContent processes piled up over a session and pages took 10-24 s | the hook writes `hooked-<pid>` once its handler is in place, and the CLI signals only processes that have it (a process still starting reads as "not answering yet"). After: 10 of 10 `open`s after a quit, 60 of 60 page loads in 2-14 s with up to 5 WebContent processes. A page whose WebContent process dies some other way stays frozen until a reload, which brings it back |
 
 ## Open
 
@@ -33,6 +34,26 @@ Darling's darlingserver.
 
 Note that a permission prompt staying over other apps while its app is still running is iOS behavior, not this
 bug: SpringBoard ignores Home while such an alert is up ("an alert item or sheet is showing and can't be dismissed").
+
+### Safari can stay frozen with its main thread suspended (x86Sim / Darling)
+
+Seen once in about 150 navigations and Safari launches: Safari stops answering (`snapshot` says "not answering yet",
+`launch` gets no reply), with no CPU use. Its main thread is parked in x86Sim's thread-suspend handler (signal 34
+blocked on that thread alone, waiting on darlingserver) while every other thread runs, and bringing Safari back to the
+front does not release it, so iOS is not holding it suspended on purpose: a suspend's matching resume is lost. Safari's
+JavaScriptCore thread suspends and resumes the main thread for garbage collection (`thread_suspend`,
+`thread_get_state`, `thread_resume`, microseconds apart), and x86Sim parks a thread that is running translated code
+only at its next safe point, after the suspend returned; x86Sim already fixed one race of this kind in darlingserver
+(a resume that arrived before the thread slept). Not reproduced on demand yet. Reloading does not help, because Safari
+itself is stuck; `agent-sim terminate com.apple.mobilesafari`, then `agent-sim open <url>` again, does.
+
+### The phone can stop all at once (Darling's server exits)
+
+Seen twice in about six hours of heavy use: every app and service freezes and no new frame is drawn (the stream and
+`record` show a still picture, `snapshot` and `launch` time out). Darling's server process has exited, with no crash in
+the kernel log, no core and nothing in its own log (with `DSERVER_LOG_CATEGORIES=dtape`, which `phone.sh` now passes
+through, its last entries were RunningBoard resuming a process). x86Sim's launcher keeps running, so `agent-sim status`
+still says running. `agent-sim down && agent-sim up` brings the phone back in about 20 s. Cause not found yet.
 
 ### `snapshot` is slow while the phone is busy
 
