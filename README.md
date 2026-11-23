@@ -54,6 +54,12 @@ claude mcp add agent-sim -- agent-sim mcp          # Claude Code
 { "mcpServers": { "agent-sim": { "command": "agent-sim", "args": ["mcp"] } } }
 ```
 
+An agent on another machine (your laptop) runs the same server over SSH; MCP's stdio passes through unchanged:
+
+```sh
+claude mcp add agent-sim -- ssh my-linux-vm agent-sim mcp
+```
+
 The tools are `snapshot`, `tap`, `type`, `scroll`, `swipe`, `press`, `launch`, `terminate`, `install`,
 `uninstall`, `apps`, `open_url`, `wait_for`, `screenshot` and `boot`. Actions answer with the screen that follows,
 so an agent sees the result of each step without asking again. For agents that work in a shell,
