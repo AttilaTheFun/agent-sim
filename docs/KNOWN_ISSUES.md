@@ -55,6 +55,14 @@ the kernel log, no core and nothing in its own log (with `DSERVER_LOG_CATEGORIES
 through, its last entries were RunningBoard resuming a process). `agent-sim status` reports the phone as crashed, and the
 commands that read the screen say so; `agent-sim up` brings it back in about 20 s. Cause not found yet.
 
+### Video does not play in Safari
+
+A `<video>` in a web page never loads: pressing Play shows Pause, but the time stays at 0, no frame is decoded and the
+length reads "indefinite" (an H.264 MP4 from a server with byte ranges, autoplay or tapped; giving WebKit's GPU process
+Metal through `X86SIM_METAL` did not change it). Video outside the browser plays: the same file added with
+`x86sim addmedia` plays in Photos at about 27 of its 30 fps. So the gap is in WebKit's media path (its GPU process),
+not in decoding. Not investigated further yet. (YouTube asks a datacenter IP to sign in first, so it is no test.)
+
 ### `snapshot` is slow while the phone is busy
 
 Once the phone has settled, a snapshot takes 35 ms on the home screen, 60 ms in Settings and about half a second on a
