@@ -28,8 +28,11 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
 - **Metal.** x86Sim's Metal stand-in runs unchanged: metalhostd (prebuilt, in the simulator) and mtlvk (built for
   arm64, on Mesa's lavapipe). x86Sim's `mtlprobe` passes 48 of its 49 checks; the one it fails checks a 1206-wide
   surface against a 64x64 triangle, so it fails whatever the GPU does.
-- **The screen.** backboardd composites through Metal into simfb's frame ring: the home screen's wallpaper
-  (PosterBoard, through an IOSurface) is drawn.
+- **The screen.** backboardd composites through Metal into simfb's frame ring. The home screen is drawn whole
+  (wallpaper, status bar, icons with their labels, the Search pill, the dock) and so are apps: Settings shows its
+  title, account card and list. Until this was fixed only IOSurface content (the wallpaper) reached the screen:
+  the render server checks each buffer a client sends with `mach_vm_region`, and Darling's answered "no such
+  address" above x86-64's user limit, where arm64 Linux maps received out-of-line memory.
 - **Apps.** `cli/libexec/simctl.py listapps` lists the runtime's apps and `simctl.py launch com.apple.Preferences`
   starts Settings.
 - **One clock.** Apple's code that reads the system counter itself (JavaScriptCore and VFX in the cache, any app)
@@ -41,14 +44,8 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
 
 ## What does not work yet
 
-- **Only IOSurface content is drawn.** backboardd draws the wallpaper, but nothing from SpringBoard's own layers
-  (clock, page dots, icons) or from an app (Settings' window is black, its background colour included); with
-  software rendering (`X86SIM_METAL=0`) nothing at all. What was ruled out, each with a test program in the
-  simulator: memory entries (in one process and across processes, named and over existing memory), xpc_shmem,
-  out-of-line Mach memory of every size and offset, IOSurface sharing with mtlvk, render-server lookups. The lead
-  left: x86Sim gives the runtime 16K pages (its arm64 commpage says page shift 14, and its translator keeps the
-  runtime's memory 16K-aligned), while natively the runtime sees Darling's 4K host pages. Making Darling present 16K
-  pages on a 4K-page host means aligning every allocation; not started.
+- **Not yet compared with Apple's simulator.** The home screen's widgets are blank white squares in a first boot,
+  and the lock screen, speed and software rendering (`X86SIM_METAL=0`) are not checked yet.
 - **launchd's run times** are negative (`ran for 18446742...ms`): its idea of when a job started is off.
 - **No agent-sim CLI yet** on arm64: `scripts/boot-arm64.sh` boots one phone; `phone.sh`, the pool and the
   pre-translation steps are x86-only.

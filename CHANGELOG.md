@@ -5,8 +5,7 @@
 - arm64 Linux, natively (work in progress, docs/ARM64.md): `scripts/setup-arm64.sh` builds Darling with
   `patches/darling-arm64` (x86Sim's Darling changes merged with Darling's arm64 host support, and the fixes arm64
   needed) and x86Sim's Metal stand-in for arm64; `scripts/boot-arm64.sh` boots the iOS 27.2 runtime with no
-  translator, through SpringBoard to the home screen. backboardd draws the wallpaper; SpringBoard's and apps' own
-  layers are not drawn yet.
+  translator, through SpringBoard to the home screen, which backboardd draws whole, as it does apps (Settings).
 - Web pages no longer stay blank, and `open` brings Safari up after it was quit: reading the screen sent SIGUSR2 to
   processes still starting, which ended them; now only processes whose hook is ready are asked.
 - `open` checks that Safari started for a web link and asks again once if it did not.

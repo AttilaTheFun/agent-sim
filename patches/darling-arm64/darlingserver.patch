@@ -487,7 +487,7 @@ index 3377f61..b0fc44a 100644
  	dtape_hooks->thread_resume(thread->context);
  
 diff --git a/duct-tape/src/memory.c b/duct-tape/src/memory.c
-index 351a58e..31cfcbd 100644
+index 351a58e..bc11410 100644
 --- a/duct-tape/src/memory.c
 +++ b/duct-tape/src/memory.c
 @@ -8,12 +8,23 @@
@@ -1667,7 +1667,7 @@ index 351a58e..31cfcbd 100644
 +	for (size_t k = 0; k < len / 8; k++) {
 +		if (w[k]) {
 +			return false;
-+		}
+ 		}
 +	}
 +	for (size_t k = len & ~(size_t)7; k < len; k++) {
 +		if (p[k]) {
@@ -1709,7 +1709,7 @@ index 351a58e..31cfcbd 100644
 +				}
 +				i += (size_t)r;
 +			}
- 		}
++		}
 +	}
 +	free(buf);
 +	return kr;
@@ -1894,7 +1894,12 @@ index 351a58e..31cfcbd 100644
 +	dtape_map_shared_descriptor_release(descriptor);
 +	return kr;
 +};
-+
+ 
+-	uint64_t offset_in_page = object_offset & page_mask;
+-	uint64_t page_count = (offset_in_page + initial_size + page_mask) / page_size;
+-	uint64_t page_offset = object_offset / page_size;
+-	int prot = dtape_linux_protection(cur_protection);
+-	uintptr_t mapped = 0;
 +// x86Sim: the memfd behind [address, address + size) of the current task, making the range a shared mapping of
 +// one first if it isn't (as mach_make_memory_entry does). For Darling processes that hand their memory to a native
 +// Linux process without copying: spike3/metal's metalhostd passes MTLBuffer pages (xpc_shmem from the app, already
@@ -1909,11 +1914,10 @@ index 351a58e..31cfcbd 100644
 +	vm_prot_t prot = VM_PROT_NONE;
 +	dtape_memory_region_info_t region_info;
  
--	uint64_t offset_in_page = object_offset & page_mask;
--	uint64_t page_count = (offset_in_page + initial_size + page_mask) / page_size;
--	uint64_t page_offset = object_offset / page_size;
--	int prot = dtape_linux_protection(cur_protection);
--	uintptr_t mapped = 0;
+-	if (!(flags & VM_FLAGS_ANYWHERE)) {
+-		dtape_memory_flags_t memflags = dtape_memory_flag_fixed;
+-		if (flags & VM_FLAGS_OVERWRITE) {
+-			memflags |= dtape_memory_flag_overwrite;
 +	if (dtape_share_region(map, start, end - start, &descriptor, &byte_offset, &prot) != KERN_SUCCESS) {
 +		return -14; // EFAULT
 +	}
@@ -1928,11 +1932,7 @@ index 351a58e..31cfcbd 100644
 +	*out_offset = byte_offset + (address - start);
 +	return 0;
 +};
- 
--	if (!(flags & VM_FLAGS_ANYWHERE)) {
--		dtape_memory_flags_t memflags = dtape_memory_flag_fixed;
--		if (flags & VM_FLAGS_OVERWRITE) {
--			memflags |= dtape_memory_flag_overwrite;
++
 +// x86Sim: a copy=TRUE vm_map of a large memory entry (lsd's 8 MB LaunchServices store, mapped by every LS client, a new
 +// entry per send) used to write a private copy into each receiver. Instead the bytes go into a frozen memfd that nobody
 +// ever maps shared or writes, and the receiver maps it MAP_PRIVATE: same snapshot semantics (its own writes stay
@@ -2143,8 +2143,9 @@ index 351a58e..31cfcbd 100644
 +			return KERN_INVALID_ARGUMENT;
 +		}
 +		size = mach_vm_round_page(entry->size - page_offset);
-+	}
-+
+ 	}
+ 
+-	*address = mapped;
 +	int frozen_fd = (copy && size >= 0x40000) ? x86sim_frozen_snapshot(descriptor->memfd, file_offset, size) : -1;
 +	X86SIM_MSTAT(frozen_fd >= 0 ? 7 : copy ? 8 : 9);
 +	if (frozen_fd >= 0) {
@@ -2184,9 +2185,8 @@ index 351a58e..31cfcbd 100644
 +		if (shared) {
 +			dtape_map_insert_shared_entry(target_map, shared);
 +		}
- 	}
- 
--	*address = mapped;
++	}
++
 +	*address = addr;
  	if (flags & VM_FLAGS_RETURN_DATA_ADDR) {
 -		*address += offset_in_page;
@@ -2273,7 +2273,7 @@ index 351a58e..31cfcbd 100644
  
  	int prot = 0;
  
-@@ -1363,39 +1792,102 @@ kern_return_t mach_vm_protect(vm_map_t map, mach_vm_offset_t start, mach_vm_size
+@@ -1363,39 +1792,110 @@ kern_return_t mach_vm_protect(vm_map_t map, mach_vm_offset_t start, mach_vm_size
  };
  
  kern_return_t mach_vm_purgable_control(vm_map_t map, mach_vm_offset_t address, vm_purgable_t control, int* state) {
@@ -2305,16 +2305,16 @@ index 351a58e..31cfcbd 100644
 +	mach_msg_type_number_t i;
 +	kern_return_t error;
 +	vm_map_copy_t copy;
-+
-+	if (map == VM_MAP_NULL || count > VM_MAP_ENTRY_MAX) {
-+		return KERN_INVALID_ARGUMENT;
-+	}
  
 -// the end of the task's user address space. Linux lists the x86_64 vsyscall page (at 0xffffffffff600000) among the
 -// mappings of a 64-bit process, but it lies in the kernel half of the address space and is not part of the task's memory.
 -// user space is the lower half of the address space for 64-bit processes (x86_64 and arm64) and the low 4 GiB for 32-bit ones.
 -static uint64_t region_lookup_end(vm_map_t map) {
 -	return (map->max_offset > VM_MAX_ADDRESS) ? (1ULL << 63) : (1ULL << 32);
++	if (map == VM_MAP_NULL || count > VM_MAP_ENTRY_MAX) {
++		return KERN_INVALID_ARGUMENT;
++	}
++
 +	error = KERN_SUCCESS;
 +	for (i = 0; i < count; i++) {
 +		vm_map_address_t map_addr = (vm_map_address_t)(data_list[i].address);
@@ -2369,10 +2369,18 @@ index 351a58e..31cfcbd 100644
  	}
  
 -	return region_info->start_address < end;
++#if defined(__x86_64__)
 +	// the Linux-only regions at the very top ([vsyscall]) are not part of the Darwin address space
 +	if (region_info->start_address >= 0x800000000000ULL) {
 +		return KERN_INVALID_ADDRESS;
 +	}
++#else
++	// arm64 Linux has no [vsyscall], and its user space reaches 2^48: Linux places mappings made without a hint
++	// (out-of-line memory a Mach message carries, among them) near the top, above the x86-64 limit
++	if (region_info->start_address >= (1ULL << 48)) {
++		return KERN_INVALID_ADDRESS;
++	}
++#endif
 +
 +	*address = region_info->start_address;
 +	*size = region_info->page_count * sysconf(_SC_PAGESIZE);
@@ -2397,7 +2405,7 @@ index 351a58e..31cfcbd 100644
  };
  
  kern_return_t mach_vm_region(vm_map_t map, mach_vm_offset_t* address, mach_vm_size_t* size, vm_region_flavor_t flavor, vm_region_info_t info, mach_msg_type_number_t* count, mach_port_t* object_name) {
-@@ -1404,144 +1896,82 @@ kern_return_t mach_vm_region(vm_map_t map, mach_vm_offset_t* address, mach_vm_si
+@@ -1404,144 +1904,82 @@ kern_return_t mach_vm_region(vm_map_t map, mach_vm_offset_t* address, mach_vm_si
  		return KERN_INVALID_ARGUMENT;
  	}
  
@@ -2609,7 +2617,7 @@ index 351a58e..31cfcbd 100644
  };
  
  kern_return_t mach_vm_region_recurse(vm_map_t map, mach_vm_address_t* address, mach_vm_size_t* size, uint32_t* depth, vm_region_recurse_info_t info, mach_msg_type_number_t* infoCnt) {
-@@ -1550,208 +1980,247 @@ kern_return_t mach_vm_region_recurse(vm_map_t map, mach_vm_address_t* address, m
+@@ -1550,208 +1988,247 @@ kern_return_t mach_vm_region_recurse(vm_map_t map, mach_vm_address_t* address, m
  		return KERN_INVALID_ARGUMENT;
  	}
  
@@ -3018,7 +3026,7 @@ index 351a58e..31cfcbd 100644
  };
  
  kern_return_t mach_vm_remap_external(vm_map_t target_map, mach_vm_offset_t* address, mach_vm_size_t size, mach_vm_offset_t mask, int flags, vm_map_t src_map, mach_vm_offset_t memory_address, boolean_t copy, vm_prot_t* cur_protection, vm_prot_t* max_protection, vm_inherit_t inheritance) {
-@@ -1892,12 +2361,23 @@ kern_return_t mach_vm_remap_new_external(vm_map_t target_map, mach_vm_offset_t*
+@@ -1892,12 +2369,23 @@ kern_return_t mach_vm_remap_new_external(vm_map_t target_map, mach_vm_offset_t*
  };
  
  kern_return_t mach_vm_wire_external(host_priv_t host_priv, vm_map_t map, mach_vm_offset_t start, mach_vm_size_t size, vm_prot_t access) {
@@ -3045,7 +3053,7 @@ index 351a58e..31cfcbd 100644
  	return KERN_SUCCESS;
  };
  
-@@ -1912,40 +2392,50 @@ kern_return_t mach_zone_get_zlog_zones(host_priv_t host, mach_zone_name_array_t*
+@@ -1912,40 +2400,50 @@ kern_return_t mach_zone_get_zlog_zones(host_priv_t host, mach_zone_name_array_t*
  };
  
  kern_return_t mach_zone_info(host_priv_t host, mach_zone_name_array_t* namesp, mach_msg_type_number_t* namesCntp, mach_zone_info_array_t* infop, mach_msg_type_number_t* infoCntp) {
@@ -3112,7 +3120,7 @@ index 351a58e..31cfcbd 100644
  };
  
  kern_return_t vm_map_unwire(vm_map_t map, vm_map_offset_t start, vm_map_offset_t end, boolean_t user_wire) {
-@@ -1964,8 +2454,12 @@ kern_return_t vm32__task_wire(vm_map_t map, boolean_t must_wire) {
+@@ -1964,8 +2462,12 @@ kern_return_t vm32__task_wire(vm_map_t map, boolean_t must_wire) {
  };
  
  kern_return_t vm32__map_exec_lockdown(vm_map_t map) {
@@ -3127,7 +3135,7 @@ index 351a58e..31cfcbd 100644
  };
  
  // <copied from="xnu://7195.141.2/osfmk/vm/vm_user.c">
-@@ -2241,11 +2735,12 @@ mach_destroy_memory_entry(
+@@ -2241,11 +2743,12 @@ mach_destroy_memory_entry(
  	named_entry->ref_count -= 1;
  
  	if (named_entry->ref_count == 0) {

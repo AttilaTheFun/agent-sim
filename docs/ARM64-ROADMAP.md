@@ -28,7 +28,8 @@ translator. launchd_sim, backboardd and SpringBoard come up; SpringBoard finishe
 launch (`simctl.py launch`); Metal works through mtlvk on lavapipe (48/49 of x86Sim's checks, the 49th a test bug).
 Reproducible from scratch with `scripts/setup-arm64.sh`.
 
-Not yet: only IOSurface content reaches the screen (the wallpaper); SpringBoard's and apps' own layers are not drawn.
+The home screen and apps draw (Settings, for one), since a fix to Darling's `mach_vm_region` for arm64's address
+space; widgets, the lock screen and speed are not checked yet.
 Darling's clock runs in nanoseconds where Apple's arm64 code expects 24 MHz ticks. No XCTest, no agent CLI, no
 Bazel integration.
 
@@ -48,7 +49,9 @@ Unit tests need no pixels and UI tests need few, so M2 and M3 run alongside M1 r
    Apple's code becomes a trap that answers Darling's clock, as TSD reads already do: in the cache, in `dyld_sim`,
    in every image `dyld_sim` maps and in the main executable. Do it first, because XCTest's timeouts and
    expectations run on this clock. (launchd's negative run times are a separate question.)
-2. **Client layers on screen.** Find where SpringBoard's and apps' layer trees stop. Instrument backboardd's render
+2. **Client layers on screen.** Done (2026-11-25): the render server checks each buffer a client sends with
+   `mach_vm_region`, which refused arm64 Linux's high addresses; the 16K-page lead was not it. Originally: find
+   where SpringBoard's and apps' layer trees stop. Instrument backboardd's render
    server (commits received, decoded, contexts attached to the display), with disassembly where needed. Lead: x86Sim
    presents the runtime with 16K pages (commpage page shift 14, 16K-aligned memory) and native Darling with the
    host's 4K. If that is it, arm64 Darling must present 16K pages: a commpage change plus 16K-aligned `mmap`,
@@ -143,6 +146,5 @@ M1.1 clock --+--> M2 unit tests --> M3 bazel test --+--> M6 Nimbus + CI
 M7 runs alongside.
 ```
 
-Risks, largest first: M1.2 (the cause is not yet known; the 16K page change, if needed, touches all of Darling's
-memory management); XCUITest under Darling (testmanagerd's privileged paths); boot time and memory per phone in
+Risks, largest first: XCUITest under Darling (testmanagerd's privileged paths); boot time and memory per phone in
 CI; keeping up with new runtimes.
