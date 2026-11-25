@@ -1,5 +1,30 @@
+diff --git a/dyld3/shared-cache/dyld_tsd_rewrite.h b/dyld3/shared-cache/dyld_tsd_rewrite.h
+index defb09f..67ddd77 100644
+--- a/dyld3/shared-cache/dyld_tsd_rewrite.h
++++ b/dyld3/shared-cache/dyld_tsd_rewrite.h
+@@ -49,6 +49,20 @@
+ #define DYLD_A64_B                 0x14000000u
+ #define DYLD_A64_NOP               0xD503201Fu
+ #define DYLD_A64_UDF_TSD_TRAP      0x0000DA00u   // + destination register
++#define DYLD_A64_UDF_COUNTER_TRAP  0x0000DB00u   // + destination register (xnu's tsd_trap.h)
++
++// True if `insn` reads the system counter: `mrs Xd, CNTVCT_EL0`, CNTVCTSS_EL0,
++// CNTPCT_EL0 or CNTPCTSS_EL0 (op0 3, op1 3, CRn 14, CRm 0, op2 2/6/1/5); stores d.
++static inline bool dyld_counter_is_read(uint32_t insn, uint32_t* reg)
++{
++    switch ( insn & 0xFFFFFFE0u ) {
++        case 0xD53BE040u: case 0xD53BE0C0u: case 0xD53BE020u: case 0xD53BE0A0u:
++            *reg = insn & 0x1F;
++            return true;
++        default:
++            return false;
++    }
++}
+ 
+ #define DYLD_TSD_VENEER_WORDS      5
+ #define DYLD_TSD_SLOT_MIN          16u
 diff --git a/src/dyld2.cpp b/src/dyld2.cpp
-index 7723026..5d6d8a7 100644
+index 7723026..da3d886 100644
 --- a/src/dyld2.cpp
 +++ b/src/dyld2.cpp
 @@ -282,7 +282,9 @@ int amfi_check_dyld_policy_self(uint64_t input_flags, uint64_t* output_flags)
@@ -13,7 +38,7 @@ index 7723026..5d6d8a7 100644
  
  	(void)input_flags;
  	*output_flags = allowEverything;
-@@ -5681,14 +5683,192 @@ static uint64_t        kdebug_trace_string(uint32_t debugid, uint64_t str_id, co
+@@ -5681,14 +5683,245 @@ static uint64_t        kdebug_trace_string(uint32_t debugid, uint64_t str_id, co
  //int             (*amfi_check_dyld_policy_self)(uint64_t input_flags, uint64_t* output_flags);
  #endif
  
@@ -28,7 +53,9 @@ index 7723026..5d6d8a7 100644
 +// maps the cache itself, through this helper, so each executable mapping of a cache file gets those reads rewritten
 +// as dyld3 does for a private macOS cache (translateDarlingCacheTSD): a branch to a veneer that loads the base from
 +// the native TLS slot libsystem_kernel fills, else the TSD trap. Only the reads are visited: their file offsets are
-+// kept in "<cache>.darling-tsd" (one hex offset per line), written by the first process that maps the cache.
++// kept in "<cache>.darling-sysregs" (one hex offset per line), written by the first process that maps the cache.
++// System counter reads (JavaScriptCore, VFX) become the counter trap: Darling's mach_absolute_time counts
++// nanoseconds, not the 24 MHz counter (tsd_trap.h).
 +// dyld cannot use snprintf (its libc's needs locale state): lowercase hex of `value`, no prefix; returns the length
 +static int darlingHex(char* out, unsigned long long value)
 +{
@@ -45,7 +72,7 @@ index 7723026..5d6d8a7 100644
 +{
 +	char sitesPath[PATH_MAX];
 +	if ( strlcpy(sitesPath, cachePath, sizeof(sitesPath)) >= sizeof(sitesPath)
-+		|| strlcat(sitesPath, ".darling-tsd", sizeof(sitesPath)) >= sizeof(sitesPath) )
++		|| strlcat(sitesPath, ".darling-sysregs", sizeof(sitesPath)) >= sizeof(sitesPath) )
 +		return;
 +	int sfd = ::open(sitesPath, O_RDONLY | O_CLOEXEC);
 +	if ( sfd >= 0 ) {
@@ -99,7 +126,8 @@ index 7723026..5d6d8a7 100644
 +			continue;
 +		for (size_t i = 0; i < length / 4; ++i) {
 +			uint32_t reg;
-+			if ( !dyld_tsd_is_tpidrro_read(words[i], &reg) && !dyld_cpu_is_tpidr_read(words[i], &reg) )
++			if ( !dyld_tsd_is_tpidrro_read(words[i], &reg) && !dyld_cpu_is_tpidr_read(words[i], &reg)
++				&& !dyld_counter_is_read(words[i], &reg) )
 +				continue;
 +			off_t at = start + (off_t)(4 * i);
 +			if ( out >= 0 ) {
@@ -158,6 +186,8 @@ index 7723026..5d6d8a7 100644
 +			}
 +		} else if ( dyld_cpu_is_tpidr_read(*insn, &reg) ) {
 +			replacement = (reg == 31) ? DYLD_A64_NOP : (DYLD_A64_MOVZ_X | reg);
++		} else if ( dyld_counter_is_read(*insn, &reg) ) {
++			replacement = (reg == 31) ? DYLD_A64_NOP : (DYLD_A64_UDF_COUNTER_TRAP | reg);
 +		} else {
 +			return;
 +		}
@@ -173,6 +203,52 @@ index 7723026..5d6d8a7 100644
 +	}
 +}
 +
++// Whether the Mach-O whose header starts this mapping is built for a simulator (LC_BUILD_VERSION's platform: iOS,
++// tvOS, watchOS or visionOS simulator). Darling's host libraries are macOS images and keep their TPIDR_EL0 reads.
++static bool darlingIsSimulatorImage(const void* header, size_t size)
++{
++	const struct mach_header_64* mh = (const struct mach_header_64*)header;
++	if ( size < sizeof(*mh) || mh->magic != 0xFEEDFACFu || sizeof(*mh) + mh->sizeofcmds > size )
++		return false;
++	const struct load_command* cmd = (const struct load_command*)(mh + 1);
++	for (uint32_t i = 0; i < mh->ncmds; ++i) {
++		if ( cmd->cmd == LC_BUILD_VERSION ) {
++			uint32_t platform = ((const struct build_version_command*)cmd)->platform;
++			return platform == PLATFORM_IOSSIMULATOR || platform == PLATFORM_TVOSSIMULATOR
++				|| platform == PLATFORM_WATCHOSSIMULATOR || platform == 12 /* PLATFORM_XROS_SIMULATOR */;
++		}
++		cmd = (const struct load_command*)((const char*)cmd + cmd->cmdsize);
++	}
++	return false;
++}
++
++// An executable mapping of a Mach-O outside the cache: its TSD and counter reads become the traps (no sites file;
++// images are small next to the cache, and are scanned as they are mapped).
++static void darlingTranslateSimImageSysregs(void* mapped, size_t size, int prot)
++{
++	uint32_t* words = (uint32_t*)mapped;
++	bool changed = false;
++	for (size_t i = 0; i < size / 4; ++i) {
++		uint32_t reg, replacement;
++		if ( dyld_tsd_is_tpidrro_read(words[i], &reg) )
++			replacement = (reg == 31) ? DYLD_A64_NOP : (DYLD_A64_UDF_TSD_TRAP | reg);
++		else if ( dyld_cpu_is_tpidr_read(words[i], &reg) )
++			replacement = (reg == 31) ? DYLD_A64_NOP : (DYLD_A64_MOVZ_X | reg);
++		else if ( dyld_counter_is_read(words[i], &reg) )
++			replacement = (reg == 31) ? DYLD_A64_NOP : (DYLD_A64_UDF_COUNTER_TRAP | reg);
++		else
++			continue;
++		if ( !changed && ::mprotect(mapped, size, PROT_READ | PROT_WRITE) != 0 )
++			return;
++		changed = true;
++		words[i] = replacement;
++	}
++	if ( changed ) {
++		sys_icache_invalidate(mapped, size);
++		::mprotect(mapped, size, prot);
++	}
++}
++
 +static void* darlingSimMmap(void* addr, size_t len, int prot, int flags, int fd, off_t offset)
 +{
 +	void* result = ::mmap(addr, len, prot, flags, fd, offset);
@@ -180,6 +256,8 @@ index 7723026..5d6d8a7 100644
 +		char magic[8];
 +		if ( ::pread(fd, magic, sizeof(magic), 0) == sizeof(magic) && memcmp(magic, "dyld_v1", 7) == 0 )
 +			darlingTranslateSimCacheTSD(result, len, prot, fd, offset);
++		else if ( darlingIsSimulatorImage(result, len) )  // a simulator Mach-O's __TEXT (in a fat file too)
++			darlingTranslateSimImageSysregs(result, len, prot);
 +	}
 +	return result;
 +}
@@ -207,7 +285,7 @@ index 7723026..5d6d8a7 100644
  		&munmap, 
  		&madvise,
  		&stat, 
-@@ -5757,9 +5937,65 @@ static const SyscallHelpers sSysCalls = {
+@@ -5757,9 +5990,67 @@ static const SyscallHelpers sSysCalls = {
  		&fstat,
  		&vm_copy,
  		// Added in version 14
@@ -251,6 +329,8 @@ index 7723026..5d6d8a7 100644
 +						*insn = (reg == 31) ? DYLD_A64_NOP : (DYLD_A64_UDF_TSD_TRAP | reg);
 +					else if ( dyld_cpu_is_tpidr_read(*insn, &reg) )
 +						*insn = (reg == 31) ? DYLD_A64_NOP : (DYLD_A64_MOVZ_X | reg);
++					else if ( dyld_counter_is_read(*insn, &reg) )
++						*insn = (reg == 31) ? DYLD_A64_NOP : (DYLD_A64_UDF_COUNTER_TRAP | reg);
 +					else
 +						continue;
 +					changed = true;
@@ -274,13 +354,40 @@ index 7723026..5d6d8a7 100644
  __attribute__((noinline))
  static const char* useSimulatorDyld(int fd, const macho_header* mainExecutableMH, const char* dyldPath,
  								int argc, const char* argv[], const char* envp[], const char* apple[],
-@@ -5932,6 +6168,11 @@ static const char* useSimulatorDyld(int fd, const macho_header* mainExecutableMH
+@@ -5932,6 +6223,38 @@ static const char* useSimulatorDyld(int fd, const macho_header* mainExecutableMH
  	}
  	close(fd);
  
 +#if defined(DARLING) && defined(__arm64__)
 +	if ( const char* tsdError = darlingTranslateSimTSD(loadAddress, preferredLoadAddress, cmds, cmd_count) )
 +		return tsdError;
++	// the program itself, which the loader mapped: each executable segment
++	{
++		const struct load_command* mcmd = (const struct load_command*)((const char*)mainExecutableMH + sizeof(macho_header));
++		uintptr_t textVM = 0;
++		bool haveText = false;
++		for (uint32_t i = 0; i < mainExecutableMH->ncmds; ++i) {
++			if ( mcmd->cmd == LC_SEGMENT_COMMAND ) {
++				const struct macho_segment_command* seg = (const struct macho_segment_command*)mcmd;
++				if ( !haveText && seg->fileoff == 0 && seg->filesize != 0 ) { textVM = seg->vmaddr; haveText = true; }
++			}
++			mcmd = (const struct load_command*)((const char*)mcmd + mcmd->cmdsize);
++		}
++		uintptr_t mainSlide = (uintptr_t)mainExecutableMH - textVM;
++		mcmd = (const struct load_command*)((const char*)mainExecutableMH + sizeof(macho_header));
++		for (uint32_t i = 0; haveText && darlingIsSimulatorImage(mainExecutableMH, 0x4000) && i < mainExecutableMH->ncmds; ++i) {
++			if ( mcmd->cmd == LC_SEGMENT_COMMAND ) {
++				const struct macho_segment_command* seg = (const struct macho_segment_command*)mcmd;
++				if ( (seg->initprot & VM_PROT_EXECUTE) && seg->filesize != 0 ) {
++					int protection = PROT_EXEC;
++					if ( seg->initprot & VM_PROT_READ ) protection |= PROT_READ;
++					if ( seg->initprot & VM_PROT_WRITE ) protection |= PROT_WRITE;
++					darlingTranslateSimImageSysregs((void*)(seg->vmaddr + mainSlide), (size_t)seg->filesize, protection);
++				}
++			}
++			mcmd = (const struct load_command*)((const char*)mcmd + mcmd->cmdsize);
++		}
++	}
 +#endif
 +
  	// Walk newly mapped dyld_sim load commands to find entry point

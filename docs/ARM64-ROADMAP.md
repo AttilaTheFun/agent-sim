@@ -42,11 +42,12 @@ Unit tests need no pixels and UI tests need few, so M2 and M3 run alongside M1 r
 
 ### M1. A correct simulator: clocks, then pixels
 
-1. **One clock.** Darling's `mach_timebase_info` says 1/1 (nanoseconds) while `CNTVCT_EL0`, which JavaScriptCore,
-   VFX and others read directly, counts 24 MHz. Make arm64 Darling match Apple silicon: `mach_absolute_time` = the
-   counter, timebase from `CNTFRQ_EL0` (125/3), with darlingserver converting the deadlines it receives
-   (mach_msg timeouts, semaphores, eventlinks, ulocks). Small and contained; do it first, because XCTest's
-   timeouts and expectations run on this clock. Also explains launchd's negative run times.
+1. **One clock.** Darling's `mach_absolute_time` counts nanoseconds (timebase 1/1); `CNTVCT_EL0`, which some of
+   Apple's code reads itself (JavaScriptCore and VFX in the cache: 35 reads), counts 24 MHz ticks. Rather than move
+   all of Darling (client and server, which assume nanoseconds in dozens of places) to ticks, each counter read in
+   Apple's code becomes a trap that answers Darling's clock, as TSD reads already do: in the cache, in `dyld_sim`,
+   in every image `dyld_sim` maps and in the main executable. Do it first, because XCTest's timeouts and
+   expectations run on this clock. (launchd's negative run times are a separate question.)
 2. **Client layers on screen.** Find where SpringBoard's and apps' layer trees stop. Instrument backboardd's render
    server (commits received, decoded, contexts attached to the display), with disassembly where needed. Lead: x86Sim
    presents the runtime with 16K pages (commpage page shift 14, 16K-aligned memory) and native Darling with the

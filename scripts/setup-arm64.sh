@@ -11,6 +11,9 @@
 #   WORK            where Darling, x86Sim and metal2vulkan are checked out and built (default ~)
 #   RUNTIME_BUILD   iOS runtime build from Apple's catalogue (default 24B8117, iOS 27.2)
 #   JOBS            parallel build jobs (default: the CPU count)
+#   XCODE_XIP       an Xcode .xip (the one the test bundles were built against: Xcode 27.2, 27B52, for
+#                   rules_applecross): its iPhoneSimulator XCTest frameworks go to $WORK/x86sim/sdks, for
+#                   x86Sim's test runner (cli/libexec/xctest.py)
 #
 # Apple's iOS runtime is downloaded from Apple onto this machine (about 8 GB, 20 GB unpacked) and never leaves it.
 set -Eeuo pipefail
@@ -40,7 +43,7 @@ apt-get install -y -q --no-install-recommends ca-certificates git git-lfs curl x
 	libgif-dev libavutil-dev libpulse-dev libavformat-dev libavcodec-dev libswresample-dev libdbus-1-dev \
 	libxkbfile-dev libssl-dev libstdc++-12-dev libcap2-bin libvulkan-dev libxkbcommon-dev libcap-dev \
 	libbz2-dev zlib1g-dev libxi-dev libxext-dev libxfixes-dev libxrender-dev libxtst-dev \
-	mesa-vulkan-drivers python3-pil
+	mesa-vulkan-drivers python3-pil cpio
 
 log "Darling $(base darling | cut -c1-12) with patches/darling-arm64"
 D=$WORK/darling
@@ -102,6 +105,12 @@ print(next(a["browser_download_url"] for a in json.load(sys.stdin)["assets"]
 		mkdir -p "$WORK/ipsw" && curl -fsSL "$url" | tar xz -C "$WORK/ipsw" && install -m755 "$WORK/ipsw/ipsw" /usr/local/bin/ipsw
 	}
 	(cd "$X" && python3 -I cli/libexec/arm64/runtime-fetch.py fetch "$RUNTIME_BUILD")
+fi
+
+if [ -n "${XCODE_XIP:-}" ]; then
+	log "XCTest for the simulator from $(basename "$XCODE_XIP")"
+	[ -d "$X/sdks/iPhoneSimulator.platform/Developer/Library/Frameworks/XCTest.framework" ] ||
+		python3 -I "$HERE/xip-platform.py" "$XCODE_XIP" "$X/sdks" iPhoneSimulator
 fi
 
 log "Done: boot a phone with X86SIM_ROOT=$X $HERE/boot-arm64.sh"

@@ -1,5 +1,5 @@
 diff --git a/darling/src/libsystem_kernel/CMakeLists.txt b/darling/src/libsystem_kernel/CMakeLists.txt
-index c8b907e7..4f341c27 100644
+index c8b907e..4f341c2 100644
 --- a/darling/src/libsystem_kernel/CMakeLists.txt
 +++ b/darling/src/libsystem_kernel/CMakeLists.txt
 @@ -37,6 +37,9 @@ add_definitions(-DPRIVATE=1)
@@ -22,14 +22,14 @@ index c8b907e7..4f341c27 100644
  		compiler_rt
 diff --git a/darling/src/libsystem_kernel/darling/emulation b/darling/src/libsystem_kernel/darling/emulation
 new file mode 120000
-index 00000000..c9e433a1
+index 0000000..c9e433a
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/darling/emulation
 @@ -0,0 +1 @@
 +../emulation/include
 \ No newline at end of file
 diff --git a/darling/src/libsystem_kernel/emulation/CMakeLists.txt b/darling/src/libsystem_kernel/emulation/CMakeLists.txt
-index 7e0eff97..f9f8b9ba 100644
+index 7e0eff9..f9f8b9b 100644
 --- a/darling/src/libsystem_kernel/emulation/CMakeLists.txt
 +++ b/darling/src/libsystem_kernel/emulation/CMakeLists.txt
 @@ -126,6 +126,7 @@ set(xnu_syscall_bsd_sources
@@ -118,7 +118,7 @@ index 7e0eff97..f9f8b9ba 100644
  	src/xnu_syscall/bsd/impl/unistd/read.c
  	src/xnu_syscall/bsd/impl/unistd/readlink.c
 diff --git a/darling/src/libsystem_kernel/emulation/include/common/base.h b/darling/src/libsystem_kernel/emulation/include/common/base.h
-index b3e75915..69b68bf7 100644
+index b3e7591..69b68bf 100644
 --- a/darling/src/libsystem_kernel/emulation/include/common/base.h
 +++ b/darling/src/libsystem_kernel/emulation/include/common/base.h
 @@ -43,5 +43,6 @@ int __linux_syscall(int nr, ...);
@@ -130,7 +130,7 @@ index b3e75915..69b68bf7 100644
  #endif // LINUX_BASE_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/common/sigsafe_lock.h b/darling/src/libsystem_kernel/emulation/include/common/sigsafe_lock.h
 new file mode 100644
-index 00000000..e3ac8b9a
+index 0000000..e3ac8b9
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/common/sigsafe_lock.h
 @@ -0,0 +1,26 @@
@@ -161,7 +161,7 @@ index 00000000..e3ac8b9a
 +
 +#endif // _DARLING_EMULATION_SIGSAFE_LOCK_H_
 diff --git a/darling/src/libsystem_kernel/emulation/include/common/tsd.h b/darling/src/libsystem_kernel/emulation/include/common/tsd.h
-index 2f9bf745..cb581257 100644
+index 2f9bf74..cb58125 100644
 --- a/darling/src/libsystem_kernel/emulation/include/common/tsd.h
 +++ b/darling/src/libsystem_kernel/emulation/include/common/tsd.h
 @@ -8,10 +8,10 @@
@@ -179,7 +179,7 @@ index 2f9bf745..cb581257 100644
  
  #endif // _DARLING_EMULATION_TSD_H_
 diff --git a/darling/src/libsystem_kernel/emulation/include/conversion/common_at.h b/darling/src/libsystem_kernel/emulation/include/conversion/common_at.h
-index bb1e5200..3b13eae8 100644
+index bb1e520..3b13eae 100644
 --- a/darling/src/libsystem_kernel/emulation/include/conversion/common_at.h
 +++ b/darling/src/libsystem_kernel/emulation/include/conversion/common_at.h
 @@ -18,6 +18,11 @@
@@ -195,7 +195,7 @@ index bb1e5200..3b13eae8 100644
  int atflags_bsd_to_linux(int flags);
  
 diff --git a/darling/src/libsystem_kernel/emulation/include/conversion/misc/getrlimit.h b/darling/src/libsystem_kernel/emulation/include/conversion/misc/getrlimit.h
-index 63b9307c..9df110a3 100644
+index 63b9307..9df110a 100644
 --- a/darling/src/libsystem_kernel/emulation/include/conversion/misc/getrlimit.h
 +++ b/darling/src/libsystem_kernel/emulation/include/conversion/misc/getrlimit.h
 @@ -50,6 +50,7 @@ enum {
@@ -207,7 +207,7 @@ index 63b9307c..9df110a3 100644
  {
  	return value > XNU_RLIM_INFINITY ? XNU_RLIM_INFINITY : value;
 diff --git a/darling/src/libsystem_kernel/emulation/include/conversion/network/getsockopt.h b/darling/src/libsystem_kernel/emulation/include/conversion/network/getsockopt.h
-index cd75a2b7..df0eff88 100644
+index cd75a2b..df0eff8 100644
 --- a/darling/src/libsystem_kernel/emulation/include/conversion/network/getsockopt.h
 +++ b/darling/src/libsystem_kernel/emulation/include/conversion/network/getsockopt.h
 @@ -63,7 +63,8 @@ enum
@@ -273,7 +273,7 @@ index cd75a2b7..df0eff88 100644
  
  #endif // DARLING_CONVERSION_NETWORK_GETSOCKOPT
 diff --git a/darling/src/libsystem_kernel/emulation/include/conversion/process/posix_spawn.h b/darling/src/libsystem_kernel/emulation/include/conversion/process/posix_spawn.h
-index 48526f07..5379d997 100644
+index 48526f0..5379d99 100644
 --- a/darling/src/libsystem_kernel/emulation/include/conversion/process/posix_spawn.h
 +++ b/darling/src/libsystem_kernel/emulation/include/conversion/process/posix_spawn.h
 @@ -24,8 +24,18 @@ struct xnu__posix_spawnattr
@@ -296,7 +296,7 @@ index 48526f07..5379d997 100644
  
  struct xnu__psfa_action
 diff --git a/darling/src/libsystem_kernel/emulation/include/conversion/stat/common.h b/darling/src/libsystem_kernel/emulation/include/conversion/stat/common.h
-index 487c2ff0..1451295c 100644
+index 487c2ff..1451295 100644
 --- a/darling/src/libsystem_kernel/emulation/include/conversion/stat/common.h
 +++ b/darling/src/libsystem_kernel/emulation/include/conversion/stat/common.h
 @@ -194,6 +194,8 @@ struct linux_statfs64
@@ -309,7 +309,7 @@ index 487c2ff0..1451295c 100644
  void statfs_bsd64_to_bsd(const struct bsd_statfs64* wide, struct bsd_statfs* stat);
  
 diff --git a/darling/src/libsystem_kernel/emulation/include/linux_premigration/elfcalls_wrapper.h b/darling/src/libsystem_kernel/emulation/include/linux_premigration/elfcalls_wrapper.h
-index aaf4db6b..8b360379 100644
+index aaf4db6..8b36037 100644
 --- a/darling/src/libsystem_kernel/emulation/include/linux_premigration/elfcalls_wrapper.h
 +++ b/darling/src/libsystem_kernel/emulation/include/linux_premigration/elfcalls_wrapper.h
 @@ -31,6 +31,7 @@ void* __darling_thread_get_stack(void);
@@ -321,7 +321,7 @@ index aaf4db6b..8b360379 100644
  void __dserver_close_socket(int socket);
  
 diff --git a/darling/src/libsystem_kernel/emulation/include/linux_premigration/ext/for-libkqueue.h b/darling/src/libsystem_kernel/emulation/include/linux_premigration/ext/for-libkqueue.h
-index 7fb8af07..70cf3f9b 100644
+index 7fb8af0..70cf3f9 100644
 --- a/darling/src/libsystem_kernel/emulation/include/linux_premigration/ext/for-libkqueue.h
 +++ b/darling/src/libsystem_kernel/emulation/include/linux_premigration/ext/for-libkqueue.h
 @@ -14,6 +14,56 @@ int _dserver_rpc_kqchan_proc_open_4libkqueue(int32_t pid, uint32_t flags, int* o
@@ -382,7 +382,7 @@ index 7fb8af07..70cf3f9b 100644
  // takes the signal and whatever its disposition. Returns 0 or a negative errno.
  VISIBLE
 diff --git a/darling/src/libsystem_kernel/emulation/include/linux_premigration/resources/dserver-rpc-defs.h b/darling/src/libsystem_kernel/emulation/include/linux_premigration/resources/dserver-rpc-defs.h
-index a17aef57..62d4bb4a 100644
+index a17aef5..62d4bb4 100644
 --- a/darling/src/libsystem_kernel/emulation/include/linux_premigration/resources/dserver-rpc-defs.h
 +++ b/darling/src/libsystem_kernel/emulation/include/linux_premigration/resources/dserver-rpc-defs.h
 @@ -284,9 +284,13 @@ __attribute__((format(printf, 1, 2)))
@@ -402,9 +402,34 @@ index a17aef57..62d4bb4a 100644
  #define dserver_rpc_hooks_atomic_save_t linux_sigset_t
  
  static void dserver_rpc_hooks_atomic_begin(dserver_rpc_hooks_atomic_save_t* atomic_save) {
+diff --git a/darling/src/libsystem_kernel/emulation/include/linux_premigration/signal/tsd_trap.h b/darling/src/libsystem_kernel/emulation/include/linux_premigration/signal/tsd_trap.h
+index 297075f..6875d47 100644
+--- a/darling/src/libsystem_kernel/emulation/include/linux_premigration/signal/tsd_trap.h
++++ b/darling/src/libsystem_kernel/emulation/include/linux_premigration/signal/tsd_trap.h
+@@ -47,4 +47,20 @@ static inline bool darling_tsd_trap_decode(uint32_t insn, uint32_t* reg)
+ 	return true;
+ }
+ 
++// The same for a Darwin read of the system counter (`mrs Xd, CNTVCT_EL0` and its
++// self-synchronized and physical variants), which dyld replaces by
++// `udf #(0xdb00 + d)`. On Apple silicon mach_absolute_time is that counter
++// (24 MHz, timebase 125/3); Darling's is CLOCK_MONOTONIC in nanoseconds (timebase
++// 1/1), so code that reads the counter itself and converts it with
++// mach_timebase_info (JavaScriptCore, VFX) gets Darling's clock from the trap.
++#define DARLING_COUNTER_TRAP_BASE 0x0000DB00u
++
++static inline bool darling_counter_trap_decode(uint32_t insn, uint32_t* reg)
++{
++	if ((insn & DARLING_TSD_TRAP_MASK) != DARLING_COUNTER_TRAP_BASE)
++		return false;
++	*reg = insn & 0x1F;
++	return true;
++}
++
+ #endif // _DARLING_TSD_TRAP_H_
 diff --git a/darling/src/libsystem_kernel/emulation/include/other/mach/foreign_hook.h b/darling/src/libsystem_kernel/emulation/include/other/mach/foreign_hook.h
 new file mode 100644
-index 00000000..a653c04b
+index 0000000..a653c04
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/other/mach/foreign_hook.h
 @@ -0,0 +1,34 @@
@@ -444,7 +469,7 @@ index 00000000..a653c04b
 +#endif
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/misc/bsdflags.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/misc/bsdflags.h
 new file mode 100644
-index 00000000..77010f39
+index 0000000..77010f3
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/misc/bsdflags.h
 @@ -0,0 +1,82 @@
@@ -532,7 +557,7 @@ index 00000000..77010f39
 +#endif
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/misc/dataless.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/misc/dataless.h
 new file mode 100644
-index 00000000..701ceffc
+index 0000000..701ceff
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/misc/dataless.h
 @@ -0,0 +1,23 @@
@@ -560,7 +585,7 @@ index 00000000..701ceffc
 +
 +#endif
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/misc/sysctl_proc.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/misc/sysctl_proc.h
-index f56c6d41..5fcfb1c1 100644
+index f56c6d4..5fcfb1c 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/misc/sysctl_proc.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/misc/sysctl_proc.h
 @@ -8,6 +8,8 @@
@@ -574,7 +599,7 @@ index f56c6d41..5fcfb1c1 100644
  // The macOS process name: the basename of the process's executable, truncated to
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/ifinfo.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/ifinfo.h
 new file mode 100644
-index 00000000..1d84c3d8
+index 0000000..1d84c3d
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/ifinfo.h
 @@ -0,0 +1,41 @@
@@ -620,7 +645,7 @@ index 00000000..1d84c3d8
 +
 +#endif // NETWORK_IFINFO_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/nosigpipe.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/nosigpipe.h
-index 9e3b9f36..7c174ade 100644
+index 9e3b9f3..7c174ad 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/nosigpipe.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/nosigpipe.h
 @@ -1,31 +1,51 @@
@@ -708,7 +733,7 @@ index 9e3b9f36..7c174ade 100644
 +#endif // NETWORK_NOSIGPIPE_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/route.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/route.h
 new file mode 100644
-index 00000000..b125195c
+index 0000000..b125195
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/route.h
 @@ -0,0 +1,68 @@
@@ -782,7 +807,7 @@ index 00000000..b125195c
 +#endif // NETWORK_ROUTE_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/rtnetlink.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/rtnetlink.h
 new file mode 100644
-index 00000000..5806c334
+index 0000000..5806c33
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/rtnetlink.h
 @@ -0,0 +1,134 @@
@@ -922,7 +947,7 @@ index 00000000..5806c334
 +#endif // NETWORK_RTNETLINK_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/sockextra.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/sockextra.h
 new file mode 100644
-index 00000000..5b935227
+index 0000000..5b93522
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/sockextra.h
 @@ -0,0 +1,68 @@
@@ -996,7 +1021,7 @@ index 00000000..5b935227
 +#endif
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/socktables.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/socktables.h
 new file mode 100644
-index 00000000..f7855fd7
+index 0000000..f7855fd
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/socktables.h
 @@ -0,0 +1,69 @@
@@ -1071,7 +1096,7 @@ index 00000000..f7855fd7
 +#endif // NETWORK_SOCKTABLES_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/sockutil.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/sockutil.h
 new file mode 100644
-index 00000000..fea30382
+index 0000000..fea3038
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/sockutil.h
 @@ -0,0 +1,40 @@
@@ -1117,7 +1142,7 @@ index 00000000..fea30382
 +#endif // NETWORK_SOCKUTIL_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/sostate.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/sostate.h
 new file mode 100644
-index 00000000..0ef46321
+index 0000000..0ef4632
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/sostate.h
 @@ -0,0 +1,114 @@
@@ -1237,7 +1262,7 @@ index 00000000..0ef46321
 +#endif // NETWORK_SOSTATE_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/tcpinfo.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/tcpinfo.h
 new file mode 100644
-index 00000000..fd044b29
+index 0000000..fd044b2
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/network/tcpinfo.h
 @@ -0,0 +1,231 @@
@@ -1473,7 +1498,7 @@ index 00000000..fd044b29
 +
 +#endif // NETWORK_TCPINFO_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/xattr/getattrlist_generic.c b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/xattr/getattrlist_generic.c
-index 0ba2843c..3eaff7be 100644
+index 0ba2843..3eaff7b 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/xattr/getattrlist_generic.c
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/xattr/getattrlist_generic.c
 @@ -1,353 +1,325 @@
@@ -3185,7 +3210,7 @@ index 0ba2843c..3eaff7be 100644
 +	return 0;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/xattr/setattrlist_generic.c b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/xattr/setattrlist_generic.c
-index 543b8cff..c9713aae 100644
+index 543b8cf..c9713aa 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/xattr/setattrlist_generic.c
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/helper/xattr/setattrlist_generic.c
 @@ -16,9 +16,27 @@ extern int do_linux_fchmodat(int fd, const char* path, int mode, int flag);
@@ -3264,7 +3289,7 @@ index 543b8cff..c9713aae 100644
  }
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/aio/aio.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/aio/aio.h
 new file mode 100644
-index 00000000..7b9cc443
+index 0000000..7b9cc44
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/aio/aio.h
 @@ -0,0 +1,19 @@
@@ -3288,7 +3313,7 @@ index 00000000..7b9cc443
 +
 +#endif // DARLING_EMULATION_AIO_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/bsdthread/bsdthread_register.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/bsdthread/bsdthread_register.h
-index 761e74fe..74baa6d6 100644
+index 761e74f..74baa6d 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/bsdthread/bsdthread_register.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/bsdthread/bsdthread_register.h
 @@ -31,6 +31,8 @@ void pthread_entry_point_wrapper(void* self, int thread_port, void* funptr,
@@ -3301,7 +3326,7 @@ index 761e74fe..74baa6d6 100644
  		void* item, int reuse, int nevents);
  
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/bsdthread/workq_kernreturn.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/bsdthread/workq_kernreturn.h
-index 8ab201f3..ac5d3e81 100644
+index 8ab201f..ac5d3e8 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/bsdthread/workq_kernreturn.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/bsdthread/workq_kernreturn.h
 @@ -7,25 +7,24 @@
@@ -3341,7 +3366,7 @@ index 8ab201f3..ac5d3e81 100644
  
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/guarded/guarded_io_np.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/guarded/guarded_io_np.h
 new file mode 100644
-index 00000000..f1268f49
+index 0000000..f1268f4
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/guarded/guarded_io_np.h
 @@ -0,0 +1,15 @@
@@ -3361,7 +3386,7 @@ index 00000000..f1268f49
 +
 +#endif // LINUX_GUARDED_IO_NP_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/kqueue/kevent_qos.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/kqueue/kevent_qos.h
-index c505ec8a..46fa9bd1 100644
+index c505ec8..46fa9bd 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/kqueue/kevent_qos.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/kqueue/kevent_qos.h
 @@ -8,4 +8,8 @@ long sys_kevent_qos(int	kq, const struct kevent_qos_s *changelist, int nchanges,
@@ -3375,7 +3400,7 @@ index c505ec8a..46fa9bd1 100644
  #endif // LINUX_KEVENT_QOS_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/mach/mach_eventlink.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/mach/mach_eventlink.h
 new file mode 100644
-index 00000000..9074d9be
+index 0000000..9074d9b
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/mach/mach_eventlink.h
 @@ -0,0 +1,12 @@
@@ -3392,7 +3417,7 @@ index 00000000..9074d9be
 +
 +#endif // LINUX_MACH_EVENTLINK_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/abort_with_payload.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/abort_with_payload.h
-index ebd3df40..d9236379 100644
+index ebd3df4..d923637 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/abort_with_payload.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/abort_with_payload.h
 @@ -2,6 +2,9 @@
@@ -3406,7 +3431,7 @@ index ebd3df40..d9236379 100644
  
  #endif // LINUX_ABORT_WITH_PAYLOAD_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/fsctl.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/fsctl.h
-index e6e1bb10..066f9314 100644
+index e6e1bb1..066f931 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/fsctl.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/fsctl.h
 @@ -1,6 +1,7 @@
@@ -3418,7 +3443,7 @@ index e6e1bb10..066f9314 100644
  long sys_ffsctl(int fd, unsigned long cmd, void* data, unsigned int options);
  
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/fsgetpath.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/fsgetpath.h
-index 295f036d..dd86950d 100644
+index 295f036..dd86950 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/fsgetpath.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/fsgetpath.h
 @@ -1,6 +1,39 @@
@@ -3463,7 +3488,7 @@ index 295f036d..dd86950d 100644
  #endif // LINUX_FSGETPATH_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/thread_selfcounts.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/thread_selfcounts.h
 new file mode 100644
-index 00000000..da267516
+index 0000000..da26751
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/thread_selfcounts.h
 @@ -0,0 +1,7 @@
@@ -3476,7 +3501,7 @@ index 00000000..da267516
 +#endif /* LINUX_THREAD_SELFCOUNTS_H */
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/x86sim_memfd.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/x86sim_memfd.h
 new file mode 100644
-index 00000000..f44fc7ed
+index 0000000..f44fc7e
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/misc/x86sim_memfd.h
 @@ -0,0 +1,15 @@
@@ -3496,7 +3521,7 @@ index 00000000..f44fc7ed
 +
 +#endif // LINUX_X86SIM_MEMFD_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/network/connect.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/network/connect.h
-index 8dd98f0f..e0ebce38 100644
+index 8dd98f0..e0ebce3 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/network/connect.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/network/connect.h
 @@ -3,7 +3,8 @@
@@ -3511,7 +3536,7 @@ index 8dd98f0f..e0ebce38 100644
  #define LINUX_SYS_CONNECT	3
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/network/msg_x.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/network/msg_x.h
 new file mode 100644
-index 00000000..c8def671
+index 0000000..c8def67
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/network/msg_x.h
 @@ -0,0 +1,17 @@
@@ -3533,7 +3558,7 @@ index 00000000..c8def671
 +
 +#endif // LINUX_MSG_X_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/network/socket.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/network/socket.h
-index 1db38827..5c716c0e 100644
+index 1db3882..5c716c0 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/network/socket.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/network/socket.h
 @@ -2,5 +2,6 @@
@@ -3545,7 +3570,7 @@ index 1db38827..5c716c0e 100644
  #endif // LINUX_SOCKET_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/process/pid_suspend.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/process/pid_suspend.h
 new file mode 100644
-index 00000000..bbdd7de6
+index 0000000..bbdd7de
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/process/pid_suspend.h
 @@ -0,0 +1,7 @@
@@ -3557,7 +3582,7 @@ index 00000000..bbdd7de6
 +
 +#endif
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/psynch/ulock_wait.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/psynch/ulock_wait.h
-index d992e1df..1a441d78 100644
+index d992e1d..1a441d7 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/psynch/ulock_wait.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/psynch/ulock_wait.h
 @@ -4,6 +4,7 @@
@@ -3577,7 +3602,7 @@ index d992e1df..1a441d78 100644
  // Classification of the operation codes shared by wait and wake.
  // The *_SHARED operations work on memory shared between processes; the 64-bit ones
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/select/select.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/select/select.h
-index d3159424..3aa62d8a 100644
+index d315942..3aa62d8 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/select/select.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/select/select.h
 @@ -6,4 +6,7 @@
@@ -3589,7 +3614,7 @@ index d3159424..3aa62d8a 100644
 +
  #endif // LINUX_SELECT_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/stat/statfs.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/stat/statfs.h
-index 7ea52f0e..ca804d63 100644
+index 7ea52f0..ca804d6 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/stat/statfs.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/stat/statfs.h
 @@ -6,4 +6,16 @@
@@ -3611,7 +3636,7 @@ index 7ea52f0e..ca804d63 100644
  #endif // LINUX_STATFS_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/unistd/access_extended.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/unistd/access_extended.h
 new file mode 100644
-index 00000000..4e5b169f
+index 0000000..4e5b169
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/unistd/access_extended.h
 @@ -0,0 +1,7 @@
@@ -3623,7 +3648,7 @@ index 00000000..4e5b169f
 +
 +#endif // LINUX_ACCESS_EXTENDED_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/unistd/renameat.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/unistd/renameat.h
-index 4e8c4d49..bdf69413 100644
+index 4e8c4d4..bdf6941 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/unistd/renameat.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/unistd/renameat.h
 @@ -2,5 +2,6 @@
@@ -3634,7 +3659,7 @@ index 4e8c4d49..bdf69413 100644
  
  #endif // LINUX_RENAMEAT_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/xattr/getattrlistat.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/xattr/getattrlistat.h
-index 541fd2e1..da577d69 100644
+index 541fd2e..da577d6 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/xattr/getattrlistat.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/xattr/getattrlistat.h
 @@ -5,11 +5,4 @@
@@ -3650,7 +3675,7 @@ index 541fd2e1..da577d69 100644
 -
  #endif // LINUX_GETATTRLISTAT_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/xattr/getattrlistbulk.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/xattr/getattrlistbulk.h
-index 5a16db45..9b13bf2f 100644
+index 5a16db4..9b13bf2 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/xattr/getattrlistbulk.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/xattr/getattrlistbulk.h
 @@ -1,9 +1,9 @@
@@ -3667,7 +3692,7 @@ index 5a16db45..9b13bf2f 100644
  
  #endif // LINUX_GETATTRLISTBULK_H
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/xattr/xattr_utils.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/xattr/xattr_utils.h
-index 00096aa2..95c324f8 100644
+index 00096aa..95c324f 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/xattr/xattr_utils.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/bsd/impl/xattr/xattr_utils.h
 @@ -87,6 +87,17 @@ static inline int xattr_is_darwin_visible(const char* name, unsigned long len)
@@ -3689,7 +3714,7 @@ index 00096aa2..95c324f8 100644
  }
  
 diff --git a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/mach/impl/mach_traps.h b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/mach/impl/mach_traps.h
-index 0ddc3092..a0ff893e 100644
+index 0ddc309..a0ff893 100644
 --- a/darling/src/libsystem_kernel/emulation/include/xnu_syscall/mach/impl/mach_traps.h
 +++ b/darling/src/libsystem_kernel/emulation/include/xnu_syscall/mach/impl/mach_traps.h
 @@ -41,10 +41,12 @@ kern_return_t _kernelrpc_mach_port_mod_refs_trap_impl(mach_port_name_t target, m
@@ -3714,7 +3739,7 @@ index 0ddc3092..a0ff893e 100644
  kern_return_t mk_timer_destroy_impl(mach_port_name_t name);
  mach_port_name_t mk_timer_create_impl(void);
 diff --git a/darling/src/libsystem_kernel/emulation/src/common/base.c b/darling/src/libsystem_kernel/emulation/src/common/base.c
-index d077d04a..5539483c 100644
+index d077d04..5539483 100644
 --- a/darling/src/libsystem_kernel/emulation/src/common/base.c
 +++ b/darling/src/libsystem_kernel/emulation/src/common/base.c
 @@ -4,16 +4,47 @@
@@ -3766,7 +3791,7 @@ index d077d04a..5539483c 100644
  }
  
 diff --git a/darling/src/libsystem_kernel/emulation/src/conversion/network/cmsg.c b/darling/src/libsystem_kernel/emulation/src/conversion/network/cmsg.c
-index abcbaefc..3fc87f2b 100644
+index abcbaef..3fc87f2 100644
 --- a/darling/src/libsystem_kernel/emulation/src/conversion/network/cmsg.c
 +++ b/darling/src/libsystem_kernel/emulation/src/conversion/network/cmsg.c
 @@ -297,7 +297,7 @@ static void close_fds(const unsigned char* data, size_t from, size_t count)
@@ -3779,7 +3804,7 @@ index abcbaefc..3fc87f2b 100644
  	}
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/conversion/network/getsockopt.c b/darling/src/libsystem_kernel/emulation/src/conversion/network/getsockopt.c
-index 55a43706..e5e97ac9 100644
+index 55a4370..e5e97ac 100644
 --- a/darling/src/libsystem_kernel/emulation/src/conversion/network/getsockopt.c
 +++ b/darling/src/libsystem_kernel/emulation/src/conversion/network/getsockopt.c
 @@ -77,8 +77,6 @@ int sockopt_bsd_to_linux(int* level, int* optname, void** optval, void* optbuf)
@@ -3877,7 +3902,7 @@ index 55a43706..e5e97ac9 100644
 +	return type;
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/conversion/stat/common.c b/darling/src/libsystem_kernel/emulation/src/conversion/stat/common.c
-index c8f245f6..083dfde9 100644
+index c8f245f..083dfde 100644
 --- a/darling/src/libsystem_kernel/emulation/src/conversion/stat/common.c
 +++ b/darling/src/libsystem_kernel/emulation/src/conversion/stat/common.c
 @@ -57,37 +57,32 @@ void stat_linux_to_bsd64(const struct linux_stat* lstat, darling_stat64_t* stat)
@@ -3956,7 +3981,7 @@ index c8f245f6..083dfde9 100644
  
  // A count that doesn't fit the legacy structure's 32-bit long fields.
 diff --git a/darling/src/libsystem_kernel/emulation/src/linux_premigration/elfcalls_wrapper.c b/darling/src/libsystem_kernel/emulation/src/linux_premigration/elfcalls_wrapper.c
-index a6c04e4e..c0d8b227 100644
+index a6c04e4..c0d8b22 100644
 --- a/darling/src/libsystem_kernel/emulation/src/linux_premigration/elfcalls_wrapper.c
 +++ b/darling/src/libsystem_kernel/emulation/src/linux_premigration/elfcalls_wrapper.c
 @@ -109,6 +109,12 @@ int __dserver_per_thread_socket(void) {
@@ -3973,7 +3998,7 @@ index a6c04e4e..c0d8b227 100644
  	return elfcalls()->dserver_per_thread_socket_refresh();
  };
 diff --git a/darling/src/libsystem_kernel/emulation/src/linux_premigration/ext/for-libkqueue.c b/darling/src/libsystem_kernel/emulation/src/linux_premigration/ext/for-libkqueue.c
-index bd94ac79..0110c120 100644
+index bd94ac7..0110c12 100644
 --- a/darling/src/libsystem_kernel/emulation/src/linux_premigration/ext/for-libkqueue.c
 +++ b/darling/src/libsystem_kernel/emulation/src/linux_premigration/ext/for-libkqueue.c
 @@ -4,6 +4,8 @@
@@ -4016,10 +4041,29 @@ index bd94ac79..0110c120 100644
  	int linux_signum = signum_bsd_to_linux(signum);
  	if (linux_signum <= 0)
 diff --git a/darling/src/libsystem_kernel/emulation/src/linux_premigration/signal/sigexc.c b/darling/src/libsystem_kernel/emulation/src/linux_premigration/signal/sigexc.c
-index 347aee58..4b33b7e1 100644
+index 347aee5..d98dd81 100644
 --- a/darling/src/libsystem_kernel/emulation/src/linux_premigration/signal/sigexc.c
 +++ b/darling/src/libsystem_kernel/emulation/src/linux_premigration/signal/sigexc.c
-@@ -857,6 +857,29 @@ static bool default_action_ignores(int bsd_signum)
+@@ -829,7 +829,17 @@ static bool emulate_darling_tsd_read(const struct linux_siginfo* info, struct li
+ 	if (info->si_code != 1 /* ILL_ILLOPC */ || (uintptr_t)info->si_addr != (uintptr_t)regs->pc)
+ 		return false;
+ 	uint32_t destination;
+-	if (!darling_tsd_trap_decode(*(const uint32_t*)regs->pc, &destination))
++	uint32_t insn = *(const uint32_t*)regs->pc;
++	if (darling_counter_trap_decode(insn, &destination)) {
++		// Darling's mach_absolute_time: CLOCK_MONOTONIC in nanoseconds
++		struct { long tv_sec, tv_nsec; } ts = { 0, 0 };
++		LINUX_SYSCALL(__NR_clock_gettime, 1 /* CLOCK_MONOTONIC */, &ts);
++		if (destination != 31)
++			regs->regs[destination] = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
++		regs->pc += sizeof(uint32_t);
++		return true;
++	}
++	if (!darling_tsd_trap_decode(insn, &destination))
+ 		return false;
+ 	if (destination != 31)
+ 		regs->regs[destination] = (uintptr_t)sys_thread_get_tsd_base();
+@@ -857,6 +867,29 @@ static bool default_action_ignores(int bsd_signum)
  	}
  }
  
@@ -4049,7 +4093,7 @@ index 347aee58..4b33b7e1 100644
  void sigexc_handler(int linux_signum, struct linux_siginfo* info, struct linux_ucontext* ctxt)
  {
  #if defined(__aarch64__) || defined(__arm64__)
-@@ -1024,6 +1047,13 @@ void sigexc_handler(int linux_signum, struct linux_siginfo* info, struct linux_u
+@@ -1024,6 +1057,13 @@ void sigexc_handler(int linux_signum, struct linux_siginfo* info, struct linux_u
  
  	linux_signum = signum_bsd_to_linux(bsd_signum);
  
@@ -4063,7 +4107,7 @@ index 347aee58..4b33b7e1 100644
  	if (sig_handlers[linux_signum] != SIG_IGN
  			&& !(sig_handlers[linux_signum] == SIG_DFL && default_action_ignores(bsd_signum)))
  	{
-@@ -1449,6 +1479,12 @@ void float_state_to_mcontext(const arm_neon_state64_t_linux* s, unsigned char* r
+@@ -1449,6 +1489,12 @@ void float_state_to_mcontext(const arm_neon_state64_t_linux* s, unsigned char* r
  
  void sigexc_thread_setup(void)
  {
@@ -4077,7 +4121,7 @@ index 347aee58..4b33b7e1 100644
  	struct linux_stack newstack = {
  		.ss_flags = 0,
 diff --git a/darling/src/libsystem_kernel/emulation/src/linux_premigration/vchroot_userspace.c b/darling/src/libsystem_kernel/emulation/src/linux_premigration/vchroot_userspace.c
-index c7492c12..3b071931 100644
+index c7492c1..3b07193 100644
 --- a/darling/src/libsystem_kernel/emulation/src/linux_premigration/vchroot_userspace.c
 +++ b/darling/src/libsystem_kernel/emulation/src/linux_premigration/vchroot_userspace.c
 @@ -1,4 +1,5 @@
@@ -4439,7 +4483,7 @@ index c7492c12..3b071931 100644
  		int rv = LINUX_SYSCALL(__NR_readlinkat, LINUX_AT_FDCWD, buf, link, sizeof(link) - 1);
  	#endif
 diff --git a/darling/src/libsystem_kernel/emulation/src/other/mach/lkm.c b/darling/src/libsystem_kernel/emulation/src/other/mach/lkm.c
-index 1a88222d..3e93f6f4 100644
+index 1a88222..3e93f6f 100644
 --- a/darling/src/libsystem_kernel/emulation/src/other/mach/lkm.c
 +++ b/darling/src/libsystem_kernel/emulation/src/other/mach/lkm.c
 @@ -40,7 +40,31 @@ static bool use_per_thread_driver_fd = false;
@@ -4533,7 +4577,7 @@ index 1a88222d..3e93f6f4 100644
  		if (dyld_get_tsd_base && !sys_thread_has_tsd_base()) {
  			void* base = dyld_get_tsd_base();
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/bsd_syscall_table.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/bsd_syscall_table.c
-index 7e5c5bd8..f00ea901 100644
+index 7e5c5bd..f00ea90 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/bsd_syscall_table.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/bsd_syscall_table.c
 @@ -1,5 +1,6 @@
@@ -4732,7 +4776,7 @@ index 7e5c5bd8..f00ea901 100644
    [538] = sys_task_inspect_for_pid,
  	[539] = sys_task_read_for_pid,
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/ioctl/socket.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/ioctl/socket.c
-index d9705201..52bcd932 100644
+index d970520..52bcd93 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/ioctl/socket.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/ioctl/socket.c
 @@ -13,6 +13,7 @@
@@ -4803,7 +4847,7 @@ index d9705201..52bcd932 100644
  	return IOCTL_PASS;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/ioctl/termios.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/ioctl/termios.c
-index d57fa392..78cad1a4 100644
+index d57fa39..78cad1a 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/ioctl/termios.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/ioctl/termios.c
 @@ -328,7 +328,20 @@ int handle_termios(int fd, unsigned int cmd, void* arg, int* retval)
@@ -4829,7 +4873,7 @@ index d57fa392..78cad1a4 100644
  		}
  	}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/common_at.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/common_at.c
-index 23bdfd7c..560ce41f 100644
+index 23bdfd7..560ce41 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/common_at.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/common_at.c
 @@ -5,7 +5,11 @@ int atflags_bsd_to_linux(int flags)
@@ -4856,7 +4900,7 @@ index 23bdfd7c..560ce41f 100644
  
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/dataless.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/dataless.c
 new file mode 100644
-index 00000000..ea00c9f9
+index 0000000..ea00c9f
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/dataless.c
 @@ -0,0 +1,267 @@
@@ -5128,7 +5172,7 @@ index 00000000..ea00c9f9
 +	return e < 0 ? e : 1;
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_hw.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_hw.c
-index 4b42d6c3..a3ff8783 100644
+index 4b42d6c..a3ff878 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_hw.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_hw.c
 @@ -3,24 +3,13 @@
@@ -6005,7 +6049,7 @@ index 4b42d6c3..a3ff8783 100644
 +	return 0;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_kern.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_kern.c
-index 30aea6a6..fb2b76ec 100644
+index 30aea6a..fb2b76e 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_kern.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_kern.c
 @@ -31,6 +31,8 @@
@@ -6272,7 +6316,7 @@ index 30aea6a6..fb2b76ec 100644
  // Apple no longer changes this value
  // https://lists.apple.com/archives/darwin-dev/2005/Jul/msg00029.html
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_net.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_net.c
-index 8076539d..739a2cf8 100644
+index 8076539..739a2cf 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_net.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_net.c
 @@ -1,39 +1,11 @@
@@ -6698,7 +6742,7 @@ index 8076539d..739a2cf8 100644
 -	return status;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_proc.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_proc.c
-index d7f9dfa0..7f9af725 100644
+index d7f9dfa..7f9af72 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_proc.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/misc/sysctl_proc.c
 @@ -10,6 +10,7 @@
@@ -6801,7 +6845,7 @@ index d7f9dfa0..7f9af725 100644
  	// process state
  	READELEM();
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/duct.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/duct.c
-index cdd5ebb3..2a08ad84 100644
+index cdd5ebb..2a08ad8 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/duct.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/duct.c
 @@ -81,60 +81,53 @@ int sockaddr_fixup_from_bsd(struct sockaddr_fixup* out, const void* bsd_sockaddr
@@ -6911,7 +6955,7 @@ index cdd5ebb3..2a08ad84 100644
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/ifinfo.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/ifinfo.c
 new file mode 100644
-index 00000000..e404e55c
+index 0000000..e404e55
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/ifinfo.c
 @@ -0,0 +1,414 @@
@@ -7330,7 +7374,7 @@ index 00000000..e404e55c
 +	return out.truncated ? -ENOMEM : 0;
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/nosigpipe.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/nosigpipe.c
-index 9b846072..784d03d7 100644
+index 9b84607..784d03d 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/nosigpipe.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/nosigpipe.c
 @@ -1,65 +1,219 @@
@@ -7595,7 +7639,7 @@ index 9b846072..784d03d7 100644
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/route.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/route.c
 new file mode 100644
-index 00000000..82a461cc
+index 0000000..82a461c
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/route.c
 @@ -0,0 +1,1165 @@
@@ -8766,7 +8810,7 @@ index 00000000..82a461cc
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/rtnetlink.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/rtnetlink.c
 new file mode 100644
-index 00000000..3032f1db
+index 0000000..3032f1d
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/rtnetlink.c
 @@ -0,0 +1,119 @@
@@ -8891,7 +8935,7 @@ index 00000000..3032f1db
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/sockextra.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/sockextra.c
 new file mode 100644
-index 00000000..1bb525d5
+index 0000000..1bb525d
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/sockextra.c
 @@ -0,0 +1,489 @@
@@ -9386,7 +9430,7 @@ index 00000000..1bb525d5
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/sockutil.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/sockutil.c
 new file mode 100644
-index 00000000..118c0b62
+index 0000000..118c0b6
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/sockutil.c
 @@ -0,0 +1,49 @@
@@ -9441,7 +9485,7 @@ index 00000000..118c0b62
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/sostate.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/sostate.c
 new file mode 100644
-index 00000000..654c1239
+index 0000000..654c123
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/sostate.c
 @@ -0,0 +1,541 @@
@@ -9988,7 +10032,7 @@ index 00000000..654c1239
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/tcpinfo.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/tcpinfo.c
 new file mode 100644
-index 00000000..f16acd2f
+index 0000000..f16acd2
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/helper/network/tcpinfo.c
 @@ -0,0 +1,291 @@
@@ -10285,7 +10329,7 @@ index 00000000..f16acd2f
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/aio/aio.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/aio/aio.c
 new file mode 100644
-index 00000000..24808459
+index 0000000..2480845
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/aio/aio.c
 @@ -0,0 +1,510 @@
@@ -10800,7 +10844,7 @@ index 00000000..24808459
 +	return ret;
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/bsdthread/bsdthread_register.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/bsdthread/bsdthread_register.c
-index 95c5cd0f..7ee520ed 100644
+index 95c5cd0..7ee520e 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/bsdthread/bsdthread_register.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/bsdthread/bsdthread_register.c
 @@ -3,6 +3,7 @@
@@ -10941,7 +10985,7 @@ index 95c5cd0f..7ee520ed 100644
  }
 +
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/bsdthread/workq_kernreturn.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/bsdthread/workq_kernreturn.c
-index 363e7eb9..e16e6e24 100644
+index 363e7eb..e16e6e2 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/bsdthread/workq_kernreturn.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/bsdthread/workq_kernreturn.c
 @@ -3,9 +3,8 @@
@@ -11884,7 +11928,7 @@ index 363e7eb9..e16e6e24 100644
  
  #define __PTHREAD_PRIORITY_CBIT_USER_INTERACTIVE 0x20
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/fcntl/fcntl.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/fcntl/fcntl.c
-index ac8fd310..6839acbe 100644
+index ac8fd31..6839acb 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/fcntl/fcntl.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/fcntl/fcntl.c
 @@ -12,9 +12,12 @@
@@ -12143,7 +12187,7 @@ index ac8fd310..6839acbe 100644
  			break;
  	}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/fcntl/openat.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/fcntl/openat.c
-index d5d6d24e..a0f4d486 100644
+index d5d6d24..a0f4d48 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/fcntl/openat.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/fcntl/openat.c
 @@ -11,8 +11,10 @@
@@ -12262,7 +12306,7 @@ index d5d6d24e..a0f4d486 100644
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/guarded/guarded_io_np.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/guarded/guarded_io_np.c
 new file mode 100644
-index 00000000..ca129841
+index 0000000..ca12984
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/guarded/guarded_io_np.c
 @@ -0,0 +1,38 @@
@@ -12305,7 +12349,7 @@ index 00000000..ca129841
 +	return sys_writev(fd, iovp, (unsigned int) iovcnt);
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kevent.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kevent.c
-index 15d7b43a..19ce361d 100644
+index 15d7b43..19ce361 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kevent.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kevent.c
 @@ -1,4 +1,5 @@
@@ -12327,7 +12371,7 @@ index 15d7b43a..19ce361d 100644
  		ret = -errno;
  	return ret;
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kevent64.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kevent64.c
-index dd9bb0de..ab906e6b 100644
+index dd9bb0d..ab906e6 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kevent64.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kevent64.c
 @@ -1,4 +1,5 @@
@@ -12349,7 +12393,7 @@ index dd9bb0de..ab906e6b 100644
  		ret = -errno;
  	return ret;
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kevent_qos.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kevent_qos.c
-index 889da9d5..e99eb484 100644
+index 889da9d..e99eb48 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kevent_qos.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kevent_qos.c
 @@ -3,7 +3,6 @@
@@ -13490,7 +13534,7 @@ index 889da9d5..e99eb484 100644
 +}
 +#endif
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kqueue.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kqueue.c
-index b24987c0..446402c6 100644
+index b24987c..446402c 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kqueue.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/kqueue/kqueue.c
 @@ -1,4 +1,5 @@
@@ -13511,7 +13555,7 @@ index b24987c0..446402c6 100644
  	else if (nofile_limit_exceeded(ret)) {
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/mach/mach_eventlink.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/mach/mach_eventlink.c
 new file mode 100644
-index 00000000..8948974e
+index 0000000..8948974
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/mach/mach_eventlink.c
 @@ -0,0 +1,46 @@
@@ -13562,7 +13606,7 @@ index 00000000..8948974e
 +		option, &result), result);
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/abort_with_payload.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/abort_with_payload.c
-index 0e769b7f..1ba9a75f 100644
+index 0e769b7..1ba9a75 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/abort_with_payload.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/abort_with_payload.c
 @@ -22,13 +22,8 @@ long sys_abort_with_payload(unsigned int reason_namespace, unsigned long long re
@@ -13581,7 +13625,7 @@ index 0e769b7f..1ba9a75f 100644
  	return sys_kill(pid, SIGKILL, 1);
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/clonefile.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/clonefile.c
-index ea55c416..8a7ad3e7 100644
+index ea55c41..8a7ad3e 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/clonefile.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/clonefile.c
 @@ -28,8 +28,19 @@
@@ -13606,7 +13650,7 @@ index ea55c416..8a7ad3e7 100644
  
  long sys_fclonefileat(int src_fd, int dest_fd, const char* dest_path, uint32_t flags) {
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/csops.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/csops.c
-index 307184be..febde59a 100644
+index 307184b..febde59 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/csops.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/csops.c
 @@ -1,296 +1,532 @@
@@ -14378,7 +14422,7 @@ index 307184be..febde59a 100644
 +	return value - 1;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makefd.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makefd.c
-index 5bf0e381..6878b636 100644
+index 5bf0e38..6878b63 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makefd.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makefd.c
 @@ -8,6 +8,7 @@
@@ -14390,7 +14434,7 @@ index 5bf0e381..6878b636 100644
  {
  	int fd = -1;
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makeport.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makeport.c
-index 3923d322..e885db7b 100644
+index 3923d32..e885db7 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makeport.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fileport_makeport.c
 @@ -8,6 +8,8 @@
@@ -14403,7 +14447,7 @@ index 3923d322..e885db7b 100644
  {
  	uint32_t port_name = 0;
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fsctl.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fsctl.c
-index 8c978d33..6815f498 100644
+index 8c978d3..6815f49 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fsctl.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fsctl.c
 @@ -1,47 +1,318 @@
@@ -14756,7 +14800,7 @@ index 8c978d33..6815f498 100644
 +	return fsctl_common(cmd, data, x86sim_fd_path(fd, buf));
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fsgetpath.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fsgetpath.c
-index a5b7d0d5..203688cd 100644
+index a5b7d0d..203688c 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fsgetpath.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fsgetpath.c
 @@ -1,11 +1,551 @@
@@ -15313,7 +15357,7 @@ index a5b7d0d5..203688cd 100644
 +	return sys_open(path, oflags, 0);
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/getrlimit.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/getrlimit.c
-index 5423916a..e0ef76e9 100644
+index 5423916..e0ef76e 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/getrlimit.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/getrlimit.c
 @@ -1,5 +1,6 @@
@@ -15332,7 +15376,7 @@ index 5423916a..e0ef76e9 100644
  }
  
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/iopolicysys.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/iopolicysys.c
-index 15c6046e..52c243c6 100644
+index 15c6046..52c243c 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/iopolicysys.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/iopolicysys.c
 @@ -5,244 +5,224 @@
@@ -15769,7 +15813,7 @@ index 15c6046e..52c243c6 100644
 +	return 0;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/mac_syscall.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/mac_syscall.c
-index 6ec2b5f9..61f995fe 100644
+index 6ec2b5f..61f995f 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/mac_syscall.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/mac_syscall.c
 @@ -1,41 +1,25 @@
@@ -15875,7 +15919,7 @@ index 6ec2b5f9..61f995fe 100644
 +
 +// x86Sim: memorystatus_control (440) is in process/memorystatus.c (RAM 2: band changes are recorded for jetsam.py).
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/proc_info.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/proc_info.c
-index 819e30c3..cce02781 100644
+index 819e30c..cce0278 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/proc_info.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/proc_info.c
 @@ -1,4 +1,3 @@
@@ -16900,7 +16944,7 @@ index 819e30c3..cce02781 100644
 -	return sizeof(struct proc_vnodepathinfo);
 -}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/sysctl.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/sysctl.c
-index a46a3b9b..bcbfd1b3 100644
+index a46a3b9..bcbfd1b 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/sysctl.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/sysctl.c
 @@ -72,6 +72,7 @@ long copyout_string_truncated(const char* str, char* out, unsigned long* out_len
@@ -16913,7 +16957,7 @@ index a46a3b9b..bcbfd1b3 100644
  	return 0;
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/thread_selfcounts.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/thread_selfcounts.c
 new file mode 100644
-index 00000000..25bdb700
+index 0000000..25bdb70
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/thread_selfcounts.c
 @@ -0,0 +1,47 @@
@@ -16966,7 +17010,7 @@ index 00000000..25bdb700
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/x86sim_inotify.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/x86sim_inotify.c
 new file mode 100644
-index 00000000..8d93c452
+index 0000000..8d93c45
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/x86sim_inotify.c
 @@ -0,0 +1,54 @@
@@ -17026,7 +17070,7 @@ index 00000000..8d93c452
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/x86sim_memfd.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/x86sim_memfd.c
 new file mode 100644
-index 00000000..4356a353
+index 0000000..4356a35
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/x86sim_memfd.c
 @@ -0,0 +1,70 @@
@@ -17101,7 +17145,7 @@ index 00000000..4356a353
 +	}
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/mman/madvise.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/mman/madvise.c
-index a66d76af..738959b3 100644
+index a66d76a..738959b 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/mman/madvise.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/mman/madvise.c
 @@ -1,198 +1,68 @@
@@ -17343,7 +17387,7 @@ index a66d76af..738959b3 100644
  		ret = errno_linux_to_bsd(ret);
  
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/mman/mman.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/mman/mman.c
-index 5aa6771b..5090e7e6 100644
+index 5aa6771..5090e7e 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/mman/mman.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/mman/mman.c
 @@ -142,7 +142,13 @@ long sys_mincore(void* addr, unsigned long len, unsigned char* vec)
@@ -17362,7 +17406,7 @@ index 5aa6771b..5090e7e6 100644
  		ret = errno_linux_to_bsd(ret);
  
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/accept.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/accept.c
-index d38ad1c9..821f7cc3 100644
+index d38ad1c..821f7cc 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/accept.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/accept.c
 @@ -62,7 +62,13 @@ static long sys_accept_common(int fd, void* from, int* socklen, bool cancelable)
@@ -17381,7 +17425,7 @@ index d38ad1c9..821f7cc3 100644
  		// on macOS (and BSD), accept-ed sockets inherit O_NONBLOCK
  		int parent_flags = sys_fcntl_nocancel(fd, F_GETFL, 0);
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/connect.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/connect.c
-index 0dc912e2..04e9042e 100644
+index 0dc912e..04e9042 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/connect.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/connect.c
 @@ -8,12 +8,25 @@
@@ -17510,7 +17554,7 @@ index 0dc912e2..04e9042e 100644
  {
  	int type = 0, typelen = sizeof(type);
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/getpeername.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/getpeername.c
-index 128eef10..52ceecd7 100644
+index 128eef1..52ceecd 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/getpeername.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/getpeername.c
 @@ -7,6 +7,7 @@
@@ -17545,7 +17589,7 @@ index 128eef10..52ceecd7 100644
  			ret = 0;
  	}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/getsockname.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/getsockname.c
-index b988affa..f00ed3d6 100644
+index b988aff..f00ed3d 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/getsockname.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/getsockname.c
 @@ -7,6 +7,7 @@
@@ -17580,7 +17624,7 @@ index b988affa..f00ed3d6 100644
  			ret = 0;
  	}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/getsockopt.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/getsockopt.c
-index 0363155f..cd91e51b 100644
+index 0363155..cd91e51 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/getsockopt.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/getsockopt.c
 @@ -10,31 +10,116 @@
@@ -17729,7 +17773,7 @@ index 0363155f..cd91e51b 100644
  			else if ((optname == BSD_SO_RCVTIMEO || optname == BSD_SO_SNDTIMEO)
  					&& optval && optlen && *optlen >= (int)sizeof(struct linux_timeval))
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/listen.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/listen.c
-index 7b63badf..5598b658 100644
+index 7b63bad..5598b65 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/listen.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/listen.c
 @@ -1,10 +1,16 @@
@@ -17752,7 +17796,7 @@ index 7b63badf..5598b658 100644
  {
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/msg_x.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/msg_x.c
 new file mode 100644
-index 00000000..4c562a1f
+index 0000000..4c562a1
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/msg_x.c
 @@ -0,0 +1,53 @@
@@ -17810,7 +17854,7 @@ index 00000000..4c562a1f
 +	return i;
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/recvfrom.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/recvfrom.c
-index 21e82498..423a138a 100644
+index 21e8249..423a138 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/recvfrom.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/recvfrom.c
 @@ -8,6 +8,7 @@
@@ -17847,7 +17891,7 @@ index 21e82498..423a138a 100644
  	return ret;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/recvmsg.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/recvmsg.c
-index ef937c92..a540d422 100644
+index ef937c9..a540d42 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/recvmsg.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/recvmsg.c
 @@ -5,17 +5,20 @@
@@ -18069,7 +18113,7 @@ index ef937c92..a540d422 100644
  	return ret;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/sendmsg.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/sendmsg.c
-index 1758acea..eb16fedc 100644
+index 1758ace..eb16fed 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/sendmsg.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/sendmsg.c
 @@ -5,18 +5,18 @@
@@ -18230,7 +18274,7 @@ index 1758acea..eb16fedc 100644
  	return ret;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/sendto.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/sendto.c
-index 66971752..9dad2993 100644
+index 6697175..9dad299 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/sendto.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/sendto.c
 @@ -9,7 +9,9 @@
@@ -18288,7 +18332,7 @@ index 66971752..9dad2993 100644
  	return ret;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/setsockopt.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/setsockopt.c
-index d154509f..e2ec25f7 100644
+index d154509..e2ec25f 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/setsockopt.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/setsockopt.c
 @@ -10,7 +10,9 @@
@@ -18422,7 +18466,7 @@ index d154509f..e2ec25f7 100644
  
  	linux_level = level;
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/shutdown.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/shutdown.c
-index be2c749b..98227f81 100644
+index be2c749..98227f8 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/shutdown.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/shutdown.c
 @@ -5,6 +5,7 @@
@@ -18446,7 +18490,7 @@ index be2c749b..98227f81 100644
  	return ret;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/socket.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/socket.c
-index c9cd26a4..c93110d6 100644
+index c9cd26a..c93110d 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/socket.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/socket.c
 @@ -10,6 +10,7 @@
@@ -18489,7 +18533,7 @@ index c9cd26a4..c93110d6 100644
 +	return sys_socket(domain, type, protocol);
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/socketpair.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/socketpair.c
-index b2295986..da477946 100644
+index b229598..da47794 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/socketpair.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/network/socketpair.c
 @@ -46,8 +46,8 @@ long sys_socketpair(int domain, int type, int protocol, int sv[2])
@@ -18504,7 +18548,7 @@ index b2295986..da477946 100644
  
  	return ret;
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/fork.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/fork.c
-index 8e2125d7..2cf1ff6d 100644
+index 8e2125d..2cf1ff6 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/fork.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/fork.c
 @@ -1,3 +1,4 @@
@@ -18615,7 +18659,7 @@ index 8e2125d7..2cf1ff6d 100644
  		__dserver_per_thread_socket_refresh();
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/memorystatus.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/memorystatus.c
 new file mode 100644
-index 00000000..7a692fed
+index 0000000..7a692fe
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/memorystatus.c
 @@ -0,0 +1,279 @@
@@ -18900,7 +18944,7 @@ index 00000000..7a692fed
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/pid_suspend.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/pid_suspend.c
 new file mode 100644
-index 00000000..9e860aa2
+index 0000000..9e860aa
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/pid_suspend.c
 @@ -0,0 +1,66 @@
@@ -18971,7 +19015,7 @@ index 00000000..9e860aa2
 +	return pid_task_op(pid, 0);
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/posix_spawn.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/posix_spawn.c
-index e730d15e..2921186a 100644
+index e730d15..2921186 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/posix_spawn.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/posix_spawn.c
 @@ -1,4 +1,5 @@
@@ -19177,7 +19221,7 @@ index e730d15e..2921186a 100644
  		if (my_pid < 0)
  		{
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/setpriority.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/setpriority.c
-index ccac110c..424c0c5b 100644
+index ccac110..424c0c5 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/setpriority.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/process/setpriority.c
 @@ -1,6 +1,22 @@
@@ -19204,7 +19248,7 @@ index ccac110c..424c0c5b 100644
  
  	// TODO: Errors
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/psynch/ulock_wait.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/psynch/ulock_wait.c
-index 771f81c5..03b825ec 100644
+index 771f81c..03b825e 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/psynch/ulock_wait.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/psynch/ulock_wait.c
 @@ -8,8 +8,8 @@
@@ -19409,7 +19453,7 @@ index 771f81c5..03b825ec 100644
 -	return sys_ulock_wait2(operation, addr, value, timeout_ns, 0);
 -}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/select/select.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/select/select.c
-index c8f2499f..d4cfd62d 100644
+index c8f2499..d4cfd62 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/select/select.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/select/select.c
 @@ -8,6 +8,125 @@
@@ -19667,7 +19711,7 @@ index c8f2499f..d4cfd62d 100644
 +	#endif
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/signal/sigpending.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/signal/sigpending.c
-index abcb1f8d..dfbb90bf 100644
+index abcb1f8..dfbb90b 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/signal/sigpending.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/signal/sigpending.c
 @@ -9,7 +9,7 @@
@@ -19680,7 +19724,7 @@ index abcb1f8d..dfbb90bf 100644
  
  	// sigpending(2) reports no errors: XNU stores the set only when one is given
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/fstat.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/fstat.c
-index d0fea0ad..505ade5d 100644
+index d0fea0a..505ade5 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/fstat.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/fstat.c
 @@ -1,6 +1,7 @@
@@ -19700,7 +19744,7 @@ index d0fea0ad..505ade5d 100644
  	return 0;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/fstatat.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/fstatat.c
-index 213fb49f..be06b608 100644
+index 213fb49..be06b60 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/fstatat.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/fstatat.c
 @@ -3,6 +3,7 @@
@@ -19739,7 +19783,7 @@ index 213fb49f..be06b608 100644
  	return 0;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/fstatfs.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/fstatfs.c
-index f20fdba4..8eea1828 100644
+index f20fdba..8eea182 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/fstatfs.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/fstatfs.c
 @@ -1,4 +1,6 @@
@@ -19827,7 +19871,7 @@ index f20fdba4..8eea1828 100644
 +	return 0;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/getfsstat.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/getfsstat.c
-index e8128f12..cc45d107 100644
+index e8128f1..cc45d10 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/getfsstat.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/getfsstat.c
 @@ -1,18 +1,205 @@
@@ -20042,7 +20086,7 @@ index e8128f12..cc45d107 100644
 +	return count;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/lstat.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/lstat.c
-index 530085c8..0ba19cea 100644
+index 530085c..0ba19ce 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/lstat.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/lstat.c
 @@ -3,6 +3,7 @@
@@ -20063,7 +20107,7 @@ index 530085c8..0ba19cea 100644
  	return 0;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/statfs.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/statfs.c
-index c8b807b7..f9852758 100644
+index c8b807b..f985275 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/statfs.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/stat/statfs.c
 @@ -1,7 +1,9 @@
@@ -20381,7 +20425,7 @@ index c8b807b7..f9852758 100644
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/access_extended.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/access_extended.c
 new file mode 100644
-index 00000000..5c4f4bab
+index 0000000..5c4f4ba
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/access_extended.c
 @@ -0,0 +1,101 @@
@@ -20487,7 +20531,7 @@ index 00000000..5c4f4bab
 +	return 0;
 +}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/chflags.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/chflags.c
-index 4a90050b..0ab8724a 100644
+index 4a90050..0ab8724 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/chflags.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/chflags.c
 @@ -5,13 +5,28 @@
@@ -20526,7 +20570,7 @@ index 4a90050b..0ab8724a 100644
 +	return r < 0 ? errno_linux_to_bsd(r) : 0;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/close.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/close.c
-index 799f9221..1938160d 100644
+index 799f922..1938160 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/close.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/close.c
 @@ -1,4 +1,5 @@
@@ -20614,7 +20658,7 @@ index 799f9221..1938160d 100644
  	ret = LINUX_SYSCALL1(__NR_close, fd);
  	if (ret < 0)
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/dup.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/dup.c
-index db96014a..d09dced0 100644
+index db96014..d09dced 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/dup.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/dup.c
 @@ -1,15 +1,23 @@
@@ -20652,7 +20696,7 @@ index db96014a..d09dced0 100644
  	}
  
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/dup2.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/dup2.c
-index 1f516a42..747df43f 100644
+index 1f516a4..747df43 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/dup2.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/dup2.c
 @@ -7,6 +7,8 @@
@@ -20703,7 +20747,7 @@ index 1f516a42..747df43f 100644
  	}
  
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/faccessat.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/faccessat.c
-index 6eb2da8a..1473a132 100644
+index 6eb2da8..1473a13 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/faccessat.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/faccessat.c
 @@ -18,9 +18,17 @@ long sys_faccessat(int fd, const char* filename, int amode, int flag)
@@ -20726,7 +20770,7 @@ index 6eb2da8a..1473a132 100644
  
  	ret = vchroot_expand(&vc);
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/fchflags.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/fchflags.c
-index 98d6df31..951ee672 100644
+index 98d6df3..951ee67 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/fchflags.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/fchflags.c
 @@ -5,13 +5,12 @@
@@ -20749,7 +20793,7 @@ index 98d6df31..951ee672 100644
 +	return r < 0 ? errno_linux_to_bsd(r) : 0;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/fchmodat.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/fchmodat.c
-index ae7d5916..85ed734c 100644
+index ae7d591..85ed734 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/fchmodat.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/fchmodat.c
 @@ -63,7 +63,7 @@ long sys_fchmodat(int fd, const char* path, int mode, int flag)
@@ -20762,7 +20806,7 @@ index ae7d5916..85ed734c 100644
  
  	strcpy(vc.path, path);
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/gettid.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/gettid.c
-index a75dfc34..1d3a970d 100644
+index a75dfc3..1d3a970 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/gettid.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/gettid.c
 @@ -4,12 +4,23 @@
@@ -20790,7 +20834,7 @@ index a75dfc34..1d3a970d 100644
  	return 0;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/read.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/read.c
-index c787bb56..0e114681 100644
+index c787bb5..0e11468 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/read.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/read.c
 @@ -3,6 +3,7 @@
@@ -20816,7 +20860,7 @@ index c787bb56..0e114681 100644
  	return ret;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/readv.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/readv.c
-index 3563bfc1..0069f931 100644
+index 3563bfc..0069f93 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/readv.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/readv.c
 @@ -3,6 +3,7 @@
@@ -20841,7 +20885,7 @@ index 3563bfc1..0069f931 100644
  	return ret;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/renameat.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/renameat.c
-index 23a1912a..e25cb926 100644
+index 23a1912..e25cb92 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/renameat.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/renameat.c
 @@ -8,6 +8,7 @@
@@ -20948,7 +20992,7 @@ index 23a1912a..e25cb926 100644
  	return 0;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/settid.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/settid.c
-index 1669ae28..a9c90e46 100644
+index 1669ae2..a9c90e4 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/settid.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/settid.c
 @@ -8,7 +8,19 @@
@@ -20973,7 +21017,7 @@ index 1669ae28..a9c90e46 100644
 +	return r;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/write.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/write.c
-index 0b84b45b..fa384071 100644
+index 0b84b45..fa38407 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/write.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/write.c
 @@ -5,8 +5,13 @@
@@ -21036,7 +21080,7 @@ index 0b84b45b..fa384071 100644
  	return ret;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/writev.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/writev.c
-index 010e26eb..39931e8b 100644
+index 010e26e..39931e8 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/writev.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/unistd/writev.c
 @@ -4,10 +4,11 @@
@@ -21091,7 +21135,7 @@ index 010e26eb..39931e8b 100644
  	return ret;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/fremovexattr.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/fremovexattr.c
-index f1c746f4..3e13f555 100644
+index f1c746f..3e13f55 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/fremovexattr.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/fremovexattr.c
 @@ -1,3 +1,4 @@
@@ -21100,7 +21144,7 @@ index f1c746f4..3e13f555 100644
  #include <darling/emulation/xnu_syscall/bsd/impl/xattr/xattr_utils.h>
  
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/getattrlistat.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/getattrlistat.c
-index 71fc8c6a..85108f5d 100644
+index 71fc8c6..85108f5 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/getattrlistat.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/getattrlistat.c
 @@ -4,64 +4,3 @@
@@ -21169,7 +21213,7 @@ index 71fc8c6a..85108f5d 100644
 -	return 0;
 -}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/getattrlistbulk.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/getattrlistbulk.c
-index 08da091a..3c2ec1e0 100644
+index 08da091..3c2ec1e 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/getattrlistbulk.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/xattr/getattrlistbulk.c
 @@ -1,148 +1,88 @@
@@ -21385,7 +21429,7 @@ index 08da091a..3c2ec1e0 100644
 -	return count;
  }
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/mach/impl/mach_traps.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/mach/impl/mach_traps.c
-index d5733d26..e8d9ad28 100644
+index d5733d2..e8d9ad2 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/mach/impl/mach_traps.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/mach/impl/mach_traps.c
 @@ -1,4 +1,6 @@
@@ -21799,7 +21843,7 @@ index d5733d26..e8d9ad28 100644
  {
  	int code = dserver_rpc_mk_timer_cancel(name, result_time);
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/mach/mach_syscall_table.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/mach/mach_syscall_table.c
-index 5bf6fc98..5f454515 100644
+index 5bf6fc9..5f45451 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/mach/mach_syscall_table.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/mach/mach_syscall_table.c
 @@ -6,6 +6,7 @@
@@ -21828,7 +21872,7 @@ index 5bf6fc98..5f454515 100644
  extern void __simple_printf(const char* format, ...);
 diff --git a/darling/src/libsystem_kernel/simcompat/simcompat.c b/darling/src/libsystem_kernel/simcompat/simcompat.c
 new file mode 100644
-index 00000000..5c85167c
+index 0000000..5c85167
 --- /dev/null
 +++ b/darling/src/libsystem_kernel/simcompat/simcompat.c
 @@ -0,0 +1,142 @@
@@ -21976,7 +22020,7 @@ index 00000000..5c85167c
 +EXPORT void os_channel_set_slot_properties(void* ring, void* slot, const void* prop) { }
 diff --git a/darling/tests/host/check.h b/darling/tests/host/check.h
 new file mode 100644
-index 00000000..0d8b9ab6
+index 0000000..0d8b9ab
 --- /dev/null
 +++ b/darling/tests/host/check.h
 @@ -0,0 +1,14 @@
@@ -21996,7 +22040,7 @@ index 00000000..0d8b9ab6
 +#define DONE() return failures ? 1 : 0
 diff --git a/darling/tests/host/iflist2.c b/darling/tests/host/iflist2.c
 new file mode 100644
-index 00000000..73e2dfd7
+index 0000000..73e2dfd
 --- /dev/null
 +++ b/darling/tests/host/iflist2.c
 @@ -0,0 +1,125 @@
@@ -22127,7 +22171,7 @@ index 00000000..73e2dfd7
 +}
 diff --git a/darling/tests/host/proc-stat.c b/darling/tests/host/proc-stat.c
 new file mode 100644
-index 00000000..d3c63bef
+index 0000000..d3c63be
 --- /dev/null
 +++ b/darling/tests/host/proc-stat.c
 @@ -0,0 +1,101 @@
@@ -22234,7 +22278,7 @@ index 00000000..d3c63bef
 +}
 diff --git a/darling/tests/host/rlimit.c b/darling/tests/host/rlimit.c
 new file mode 100644
-index 00000000..3f5a91d1
+index 0000000..3f5a91d
 --- /dev/null
 +++ b/darling/tests/host/rlimit.c
 @@ -0,0 +1,74 @@
@@ -22314,7 +22358,7 @@ index 00000000..3f5a91d1
 +}
 diff --git a/darling/tests/host/run.sh b/darling/tests/host/run.sh
 new file mode 100755
-index 00000000..3b55f12f
+index 0000000..3b55f12
 --- /dev/null
 +++ b/darling/tests/host/run.sh
 @@ -0,0 +1,122 @@
@@ -22442,7 +22486,7 @@ index 00000000..3b55f12f
 +exit $failed
 diff --git a/darling/tests/host/shim-include/darling/emulation/common/bsdthread/per_thread_wd.h b/darling/tests/host/shim-include/darling/emulation/common/bsdthread/per_thread_wd.h
 new file mode 100644
-index 00000000..baee3d05
+index 0000000..baee3d0
 --- /dev/null
 +++ b/darling/tests/host/shim-include/darling/emulation/common/bsdthread/per_thread_wd.h
 @@ -0,0 +1,10 @@
@@ -22458,7 +22502,7 @@ index 00000000..baee3d05
 +#endif
 diff --git a/darling/tests/host/shim.c b/darling/tests/host/shim.c
 new file mode 100644
-index 00000000..b8efba9e
+index 0000000..b8efba9
 --- /dev/null
 +++ b/darling/tests/host/shim.c
 @@ -0,0 +1,134 @@
@@ -22598,7 +22642,7 @@ index 00000000..b8efba9e
 +}
 diff --git a/darling/tests/host/symlinkat.c b/darling/tests/host/symlinkat.c
 new file mode 100644
-index 00000000..bf34b7de
+index 0000000..bf34b7d
 --- /dev/null
 +++ b/darling/tests/host/symlinkat.c
 @@ -0,0 +1,28 @@
@@ -22632,7 +22676,7 @@ index 00000000..bf34b7de
 +}
 diff --git a/darling/tests/host/waitid.c b/darling/tests/host/waitid.c
 new file mode 100644
-index 00000000..13d5af6a
+index 0000000..13d5af6
 --- /dev/null
 +++ b/darling/tests/host/waitid.c
 @@ -0,0 +1,43 @@
@@ -22680,7 +22724,7 @@ index 00000000..13d5af6a
 +	DONE();
 +}
 diff --git a/libsyscall/CMakeLists.txt b/libsyscall/CMakeLists.txt
-index 3b809d21..a44200a9 100755
+index 3b809d2..a44200a 100755
 --- a/libsyscall/CMakeLists.txt
 +++ b/libsyscall/CMakeLists.txt
 @@ -47,6 +47,7 @@ set(LIBSYSCALL_MIGS
@@ -22692,7 +22736,7 @@ index 3b809d21..a44200a9 100755
  
  set(LIBSYSCALL_MIGS_INTERNAL
 diff --git a/libsyscall/mach/mach_msg.c b/libsyscall/mach/mach_msg.c
-index df13e2bc..77ecbcf9 100644
+index df13e2b..77ecbcf 100644
 --- a/libsyscall/mach/mach_msg.c
 +++ b/libsyscall/mach/mach_msg.c
 @@ -200,6 +200,9 @@ mach_msg_size_t rcv_scatter_size;
@@ -22714,7 +22758,7 @@ index df13e2bc..77ecbcf9 100644
  mach_msg_return_t
  mach_msg_send(mach_msg_header_t *msg)
 diff --git a/libsyscall/mach/mach_vm.c b/libsyscall/mach/mach_vm.c
-index 365d9a94..2d2c07cb 100644
+index 365d9a9..2d2c07c 100644
 --- a/libsyscall/mach/mach_vm.c
 +++ b/libsyscall/mach/mach_vm.c
 @@ -157,6 +157,11 @@ vm_protect(
@@ -22743,7 +22787,7 @@ index 365d9a94..2d2c07cb 100644
  		rv = _kernelrpc_mach_vm_map(target, address, size, mask, flags, object,
  		    offset, copy, cur_protection, max_protection, inheritance);
 diff --git a/libsyscall/os/tsd.h b/libsyscall/os/tsd.h
-index 36c6c363..d17fda30 100644
+index 36c6c36..d17fda3 100644
 --- a/libsyscall/os/tsd.h
 +++ b/libsyscall/os/tsd.h
 @@ -63,6 +63,24 @@ static __inline__ unsigned int
@@ -22772,7 +22816,7 @@ index 36c6c363..d17fda30 100644
  
  #if defined(__x86_64__)
 diff --git a/libsyscall/wrappers/_libkernel_init.c b/libsyscall/wrappers/_libkernel_init.c
-index e6782c27..cb48d5f4 100644
+index e6782c2..cb48d5f 100644
 --- a/libsyscall/wrappers/_libkernel_init.c
 +++ b/libsyscall/wrappers/_libkernel_init.c
 @@ -95,6 +95,19 @@ __libkernel_init(_libkernel_functions_t fns,
@@ -22796,7 +22840,7 @@ index e6782c27..cb48d5f4 100644
  	sigexc_setup();
  	psynch_inproc_init(envp);
 diff --git a/libsyscall/wrappers/_libkernel_init.h b/libsyscall/wrappers/_libkernel_init.h
-index a72622a8..d8d5c5c2 100644
+index a72622a..d8d5c5c 100644
 --- a/libsyscall/wrappers/_libkernel_init.h
 +++ b/libsyscall/wrappers/_libkernel_init.h
 @@ -79,6 +79,15 @@ typedef const struct _libkernel_functions {
@@ -22816,7 +22860,7 @@ index a72622a8..d8d5c5c2 100644
  	/* The following functions are included in version 1 of this structure */
  	unsigned long version;
 diff --git a/libsyscall/wrappers/spawn/spawn_private.h b/libsyscall/wrappers/spawn/spawn_private.h
-index 6510b853..d628427f 100644
+index 6510b85..d628427 100644
 --- a/libsyscall/wrappers/spawn/spawn_private.h
 +++ b/libsyscall/wrappers/spawn/spawn_private.h
 @@ -56,7 +56,10 @@ int     posix_spawnattr_set_jetsam_ttr_np(const posix_spawnattr_t * __restrict a
@@ -22832,7 +22876,7 @@ index 6510b853..d628427f 100644
      int count, mach_port_t portarray[])  __API_AVAILABLE(macos(10.9), ios(6.0));
  
 diff --git a/libsyscall/wrappers/work_interval.c b/libsyscall/wrappers/work_interval.c
-index 49a18b6a..15dda907 100644
+index 49a18b6..15dda90 100644
 --- a/libsyscall/wrappers/work_interval.c
 +++ b/libsyscall/wrappers/work_interval.c
 @@ -274,45 +274,37 @@ work_interval_copy_port(work_interval_t interval_handle, mach_port_t *port)

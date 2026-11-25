@@ -32,6 +32,12 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   (PosterBoard, through an IOSurface) is drawn.
 - **Apps.** `cli/libexec/simctl.py listapps` lists the runtime's apps and `simctl.py launch com.apple.Preferences`
   starts Settings.
+- **One clock.** Apple's code that reads the system counter itself (JavaScriptCore and VFX in the cache, any app)
+  gets Darling's `mach_absolute_time` clock, as all other code does: dyld turns each such read into a trap
+  libsystem_kernel answers (Darling counts nanoseconds, timebase 1/1, where Apple silicon counts 24 MHz ticks).
+- **XCTest.** `scripts/xip-platform.py` takes XCTest's iPhoneSimulator frameworks out of an Xcode .xip in about a
+  minute (`XCODE_XIP=... scripts/setup-arm64.sh`); Xcode's `xctest` agent runs in the device
+  (`simctl.py spawn`). Running test bundles (x86Sim's `cli/libexec/xctest.py`) is next.
 
 ## What does not work yet
 
@@ -43,8 +49,7 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   left: x86Sim gives the runtime 16K pages (its arm64 commpage says page shift 14, and its translator keeps the
   runtime's memory 16K-aligned), while natively the runtime sees Darling's 4K host pages. Making Darling present 16K
   pages on a 4K-page host means aligning every allocation; not started.
-- **Two clocks.** Darling's `mach_absolute_time` counts nanoseconds (timebase 1/1); Apple's arm64 code that reads
-  the counter register directly (JavaScriptCore, VFX) gets 24 MHz ticks. launchd_sim reports negative run times.
+- **launchd's run times** are negative (`ran for 18446742...ms`): its idea of when a job started is off.
 - **No agent-sim CLI yet** on arm64: `scripts/boot-arm64.sh` boots one phone; `phone.sh`, the pool and the
   pre-translation steps are x86-only.
 
