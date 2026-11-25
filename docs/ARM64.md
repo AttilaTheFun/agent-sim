@@ -4,6 +4,8 @@ agent-sim's phones run on x86-64 Linux, where x86Sim translates the runtime's ar
 none of that translation is needed: Apple's arm64 simulator runtime can run as it is, under Darling. This page is the
 state of that port. It is work in progress, not yet wired into the CLI.
 
+Where it goes from here, up to unit and UI tests run by `bazel test` in containers: [ARM64-ROADMAP.md](ARM64-ROADMAP.md).
+
 ## What works
 
 Measured in a Nimbus container (Apple's containerization kernel 6.18, arm64, 4K pages, 48-bit VA, 12 CPUs, 16-32 GB) on

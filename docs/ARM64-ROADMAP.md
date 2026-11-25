@@ -1,0 +1,138 @@
+# Roadmap: iOS development and tests in Linux containers
+
+The goal: an agent in a Linux container (a Nimbus lease or a CI job) builds an iOS app and its test bundles, runs
+the unit and UI tests in an iOS simulator in the same kind of container, and drives the app itself, with no Mac.
+
+Two halves, kept apart on purpose:
+
+| | Builds (ships) | Runs (never ships) |
+|---|---|---|
+| Project | rules_applecross (Apple Cross session) | agent-sim arm64 (Agent Simulator session) |
+| Produces | apps, extensions, `.xctest` bundles, signed, for the App Store | a booted simulator in a container, test results |
+| Method | clean room: no decompiling or disassembling Apple's binaries | may disassemble Apple's binaries (as x86Sim did) |
+| Ends at | "`bazel test` off a Mac builds the bundles but has nothing to run them on" | `bazel test` runs them |
+
+## Where things stand (2026-11-25)
+
+Done (docs/ARM64.md): Apple's iOS 27.2 runtime boots natively in an arm64 Nimbus container under Darling, with no
+translator. launchd_sim, backboardd and SpringBoard come up; SpringBoard finishes starting at the home screen; apps
+launch (`simctl.py launch`); Metal works through mtlvk on lavapipe (48/49 of x86Sim's checks, the 49th a test bug).
+Reproducible from scratch with `scripts/setup-arm64.sh`.
+
+Not yet: only IOSurface content reaches the screen (the wallpaper); SpringBoard's and apps' own layers are not drawn.
+Darling's clock runs in nanoseconds where Apple's arm64 code expects 24 MHz ticks. No XCTest, no agent CLI, no
+Bazel integration.
+
+Useful already: x86Sim's XCTest runner (`cli/libexec/xctest.py`) covers logic tests (the `xctest` tool), app-hosted
+unit tests (`libXCTestBundleInject`) and XCUITest (testmanagerd and XCTRunner), from an `.xctestrun` or explicit
+bundles, with JUnit XML. It needs Xcode's iPhoneSimulator platform frameworks (XCTest and friends).
+
+## Milestones
+
+Unit tests need no pixels and UI tests need few, so M2 and M3 run alongside M1 rather than after it.
+
+### M1. A correct simulator: clocks, then pixels
+
+1. **One clock.** Darling's `mach_timebase_info` says 1/1 (nanoseconds) while `CNTVCT_EL0`, which JavaScriptCore,
+   VFX and others read directly, counts 24 MHz. Make arm64 Darling match Apple silicon: `mach_absolute_time` = the
+   counter, timebase from `CNTFRQ_EL0` (125/3), with darlingserver converting the deadlines it receives
+   (mach_msg timeouts, semaphores, eventlinks, ulocks). Small and contained; do it first, because XCTest's
+   timeouts and expectations run on this clock. Also explains launchd's negative run times.
+2. **Client layers on screen.** Find where SpringBoard's and apps' layer trees stop. Instrument backboardd's render
+   server (commits received, decoded, contexts attached to the display), with disassembly where needed. Lead: x86Sim
+   presents the runtime with 16K pages (commpage page shift 14, 16K-aligned memory) and native Darling with the
+   host's 4K. If that is it, arm64 Darling must present 16K pages: a commpage change plus 16K-aligned `mmap`,
+   `vm_allocate` and `mach_vm_map` placement in libsystem_kernel (darlingserver's duct-tape is already 16K).
+3. **Done when:** a first boot shows the lock screen and home screen with icons, and Settings, as Apple's simulator
+   draws them (x86Sim's reference screenshots), at about the same speed as x86Sim on comparable hardware.
+
+### M2. XCTest in the container: logic and app-hosted unit tests
+
+1. Run x86Sim's `xctest.py` against an arm64 boot (it assumes `boot-a64.sh`'s layout and the translator's process
+   model in places): logic bundles first, then app-hosted.
+2. XCTest's platform frameworks from an Xcode `.xip` on Linux, the same Xcode rules_applecross already takes its
+   SDK from (x86Sim's `dev setup sdk --xip`), fetched once per machine like the runtime, never committed.
+3. Test bundles **built by rules_applecross on Linux**, not by Xcode: x86Sim's `tests/apps/XCTestDemo` (logic,
+   hosted and UI targets) as a rules_apple workspace. This is the first time the two halves meet.
+4. **Done when:** XCTestDemo's logic and hosted tests, built on Linux, pass in a container, with JUnit XML; a
+   failing assertion fails with the right file and line.
+
+### M3. `bazel test` on Linux
+
+1. A test runner for rules_apple's `ios_unit_test` / `ios_ui_test` (`AppleTestRunnerInfo`, as
+   `ios_xctestrun_runner` provides) that installs the bundles on a simulator, runs them, writes `$TEST_XMLFILE`
+   and returns the test's status.
+2. The simulator needs root, namespaces and a boot (a minute or two), none of which a Bazel test sandbox gives. So
+   the runner is a thin client of a **phone service** in the container (agent-sim's pool: phones booted once,
+   reset between test targets, handed out one per test), over a Unix socket.
+3. The runner lives in agent-sim (or a small Bazel module published from it), not in rules_applecross, so no
+   simulator-side code enters the clean-room repository. Projects using rules_applecross select it with one
+   `runner =` line.
+4. **Done when:** `bazel test //...` of a rules_applecross project in an arm64 container runs its iOS unit tests,
+   several test targets in parallel on several phones, and Bazel's result caching works as on a Mac.
+
+### M4. UI tests
+
+1. XCUITest: testmanagerd in the device (x86Sim's `xctest` feature), XCTRunner, the app launched and driven
+   through simhid. Queries go through accessibility, so most UI tests should run once M2 works; screenshots
+   (`XCUIScreenshot`, failure attachments) need M1.
+2. Deterministic screenshots as AGENTS.md asks of every proof: the status bar held at 9:41 with full signal and
+   battery (CoreSimulator's `status_bar override`, which x86Sim's simctl may already have), a fixed locale, time
+   zone and appearance.
+3. **Done when:** XCTestDemo's UI tests and one real app's UI suite (Visor's, say) pass in a container, with
+   screenshots that match the same tests on a macOS VM closely enough for review.
+
+### M5. Agents drive apps
+
+1. agent-sim's CLI and MCP server on arm64: `up`, `install`, `launch`, `snapshot`, `tap`, `type`, `screenshot`, the
+   pool and the browser stream. `phone.sh` and the pre-translation steps are x86-only today; the accessibility
+   hook and the SpringBoard hook are simulator dylibs that rules_applecross can now build on Linux.
+2. Fast phones: boot once and keep a booted prefix to clone, so a fresh phone takes seconds; measure phones per GB
+   (x86Sim fit three in 6.8 GB with the translator; native should do better).
+3. **Done when:** an agent in a Visor container session builds an app with rules_applecross, installs it, drives
+   it over MCP and runs its tests, all in containers.
+
+### M6. In Nimbus and CI
+
+1. A Nimbus config (an image with Darling built in, the runtime and Xcode's platform frameworks in Nimbus
+   storage, not in the image) that leases a container with a phone service already booted. Owned with the Nimbus
+   session.
+2. CI: the unit and UI test jobs of private repositories move from macOS VMs to these containers (the two-VM
+   licence cap stops being the bottleneck). Release proof screenshots stay on macOS VMs until M4's screenshots
+   are trusted.
+3. Runtime updates: each new iOS 27.x (and later 28) runtime gets a smoke boot and XCTestDemo run before CI
+   switches to it.
+
+### M7. Upstream and maintenance
+
+The general Darling fixes (the `/proc/<pid>/mem` fallback, libnetwork on arm64, XNU's `apple[]` strings, host-page
+rounding, the dyld_sim helpers) go to darlinghq as Logan's PRs, through the Upstream session. agent-sim's patches
+follow x86Sim's forks as they move.
+
+## Rules between the two halves
+
+- **Nothing derived from Apple's binaries goes to Apple Cross**: no code, notes, hints, symbol names from
+  disassembly or explanations of why Apple's code behaves as it does. What may go: whether its bundles' tests
+  passed, failed or crashed, their logs and JUnit output, and stack frames in its own code. The simulator is a
+  black box to rules_applecross, which may use its outputs as a reference, as the hand-off brief allows.
+- **Apple Cross may send problem statements**: bundles that do not run, test projects, expectations. Answers come
+  back as results, not reasons.
+- **Nothing of the simulator ships.** Shipped apps are built by rules_applecross alone. The test runner installs
+  and runs bundles; it never changes them, and its own code stays in agent-sim.
+- Apple's simulator runtime and Xcode's platform frameworks are fetched from Apple onto each machine and never
+  committed or published, as today.
+
+## Order and dependencies
+
+```
+M1.1 clock --+--> M2 unit tests --> M3 bazel test --+--> M6 Nimbus + CI
+             |                                      |
+             +--> M1.2 pixels --> M4 UI tests ------+
+                       |
+                       +--> M5 agents drive apps ----> M6
+M7 runs alongside.
+```
+
+Risks, largest first: M1.2 (the cause is not yet known; the 16K page change, if needed, touches all of Darling's
+memory management); XCUITest under Darling (testmanagerd's privileged paths); boot time and memory per phone in
+CI; keeping up with new runtimes.
