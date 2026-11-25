@@ -1,0 +1,64 @@
+"""XCTestDemo (x86sim's tests/apps/XCTestDemo) built on Linux with
+rules_applecross: an app, a logic test bundle, a hosted unit test bundle and
+a UI test bundle, for agent-sim to run.
+
+The sources are x86sim's, GPL-3.0, fetched at a pinned commit rather than
+copied here; this module holds only the build files.
+"""
+
+module(name = "xctestdemo")
+
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "apple_support", version = "2.11.0")
+bazel_dep(name = "rules_swift", version = "4.2.2")
+
+# rules_apple with rules_applecross's patches, and the rules_applecross it
+# asks for (a preset pair from AttilaTheFun/bazel_registry, in .bazelrc).
+bazel_dep(name = "rules_apple", version = "5.3.1.applecross.7", repo_name = "build_bazel_rules_apple")
+bazel_dep(name = "rules_applecross", version = "0.0.3.1f03f48")
+
+apple_cross_toolchain = use_extension("@rules_applecross//toolchain:extensions.bzl", "apple_cross_toolchain")
+
+# The Swift that built Xcode 27.2's SDKs.
+apple_cross_toolchain.swift(
+    name = "applecross_swift",
+    platform_sha256 = {
+        "ubuntu24.04": "2e9ebec040ad459dd89a6d093a02d8314939135104850fae4d5c0f174fb3ba8c",
+        "ubuntu24.04-aarch64": "307772afcc0b9501faa4797eb4197076facf5768593a0d8d2b83615c95b0040e",
+        "xcode": "0a7d8489900d21dbf5f0187cb570e646a4c0226d0ddef2cbde8c7f54dfe79736",
+    },
+    swift_version = "6.4.2",
+)
+
+# Xcode 27.2 (27B52), from its .xip, pinned by SHA-256. The URL is a
+# placeholder: give the .xip with --distdir=<folder holding Xcode_27.2.xip>
+# (or a --downloader_config rewrite) in .bazelrc.user.
+apple_cross_toolchain.configure(
+    name = "apple_cross_toolchain",
+    swift_tools = {
+        "aarch64": "@applecross_swift_ubuntu24.04-aarch64//:tools",
+        "x86_64": "@applecross_swift_ubuntu24.04//:tools",
+    },
+    swift_tools_macos = "@applecross_swift_xcode//:tools",
+    xcode_version = "27.2",
+    xcode_xip_urls = ["https://xcode.invalid/Xcode_27.2.xip"],
+)
+use_repo(apple_cross_toolchain, "apple_cross_toolchain")
+
+register_toolchains("@apple_cross_toolchain//:all")
+
+register_toolchains(
+    "@rules_applecross//toolchain:apple_bundling_on_linux",
+    "@rules_applecross//toolchain:apple_bundling_on_macos",
+)
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+# x86sim's XCTestDemo sources (GPL-3.0), at a pinned commit.
+http_archive(
+    name = "xctestdemo_sources",
+    build_file = "//:sources.BUILD.bazel",
+    sha256 = "c3e131b3dd3fdbafe703a638a8384dfd86a4e719ca9491894992753924d9d53b",
+    strip_prefix = "x86sim-c86deddc8479caa95597abd0c1d3b898ed191bd4/tests/apps/XCTestDemo",
+    urls = ["https://github.com/x86sim/x86sim/archive/c86deddc8479caa95597abd0c1d3b898ed191bd4.tar.gz"],
+)

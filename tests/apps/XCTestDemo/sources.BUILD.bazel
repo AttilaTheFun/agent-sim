@@ -1,0 +1,3 @@
+# x86sim's XCTestDemo sources (GPL-3.0), as fetched by MODULE.bazel.
+
+exports_files(glob(["**/*.swift"]))

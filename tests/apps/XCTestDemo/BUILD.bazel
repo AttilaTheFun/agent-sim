@@ -1,0 +1,78 @@
+load("@build_bazel_rules_apple//apple:ios.bzl", "ios_application", "ios_ui_test", "ios_unit_test")
+load("@rules_swift//swift:swift.bzl", "swift_library")
+
+# Xcode's project: iOS 27.0, Swift 5 mode, Info.plists generated.
+MINIMUM_OS = "27.0"
+
+# The app's code, as a library its tests can `@testable import`.
+swift_library(
+    name = "XCTestDemoLib",
+    srcs = ["@xctestdemo_sources//:XCTestDemo/App.swift"],
+    copts = ["-enable-testing"],
+    module_name = "XCTestDemo",
+    tags = ["manual"],
+)
+
+ios_application(
+    name = "XCTestDemo",
+    bundle_id = "com.x86sim.test.XCTestDemo",
+    families = [
+        "iphone",
+        "ipad",
+    ],
+    infoplists = ["Info.plist"],
+    minimum_os_version = MINIMUM_OS,
+    deps = [":XCTestDemoLib"],
+)
+
+# A logic test bundle: no host app (run by the xctest tool).
+swift_library(
+    name = "XCTestDemoLogicTestsLib",
+    testonly = True,
+    srcs = ["@xctestdemo_sources//:XCTestDemoLogicTests/LogicTests.swift"],
+    module_name = "XCTestDemoLogicTests",
+    tags = ["manual"],
+)
+
+ios_unit_test(
+    name = "XCTestDemoLogicTests",
+    bundle_id = "com.x86sim.test.XCTestDemoLogicTests",
+    minimum_os_version = MINIMUM_OS,
+    test_host = None,
+    deps = [":XCTestDemoLogicTestsLib"],
+)
+
+# Unit tests hosted in XCTestDemo.app.
+swift_library(
+    name = "XCTestDemoTestsLib",
+    testonly = True,
+    srcs = ["@xctestdemo_sources//:XCTestDemoTests/XCTestDemoTests.swift"],
+    module_name = "XCTestDemoTests",
+    tags = ["manual"],
+    deps = [":XCTestDemoLib"],
+)
+
+ios_unit_test(
+    name = "XCTestDemoTests",
+    bundle_id = "com.x86sim.test.XCTestDemoTests",
+    minimum_os_version = MINIMUM_OS,
+    test_host = ":XCTestDemo",
+    deps = [":XCTestDemoTestsLib"],
+)
+
+# UI tests (XCUITest) driving XCTestDemo.app.
+swift_library(
+    name = "XCTestDemoUITestsLib",
+    testonly = True,
+    srcs = ["@xctestdemo_sources//:XCTestDemoUITests/XCTestDemoUITests.swift"],
+    module_name = "XCTestDemoUITests",
+    tags = ["manual"],
+)
+
+ios_ui_test(
+    name = "XCTestDemoUITests",
+    bundle_id = "com.x86sim.test.XCTestDemoUITests",
+    minimum_os_version = MINIMUM_OS,
+    test_host = ":XCTestDemo",
+    deps = [":XCTestDemoUITestsLib"],
+)
