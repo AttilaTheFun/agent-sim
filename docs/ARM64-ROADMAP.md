@@ -3,6 +3,15 @@
 The goal: an agent in a Linux container (a Nimbus lease or a CI job) builds an iOS app and its test bundles, runs
 the unit and UI tests in an iOS simulator in the same kind of container, and drives the app itself, with no Mac.
 
+agent-sim picks up where rules_applecross leaves off: rules_applecross builds clean-room bundles on Linux, and
+agent-sim runs them in a simulator that is not clean-room. The bundles are the same either way, so each project
+chooses where to run them:
+
+- **Purity:** build on Linux with rules_applecross, run in Apple's own simulator on a macOS VM. Nothing outside
+  the clean room touches the project.
+- **Speed and scale:** build on Linux, run on Linux with agent-sim. Phones are limited only by CPU and memory, not
+  by the two-VM licence cap on macOS.
+
 Two halves, kept apart on purpose:
 
 | | Builds (ships) | Runs (never ships) |
