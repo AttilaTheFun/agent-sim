@@ -1,0 +1,318 @@
+diff --git a/src/dyld2.cpp b/src/dyld2.cpp
+index 7723026..5d6d8a7 100644
+--- a/src/dyld2.cpp
++++ b/src/dyld2.cpp
+@@ -282,7 +282,9 @@ int amfi_check_dyld_policy_self(uint64_t input_flags, uint64_t* output_flags)
+ 		AMFI_DYLD_OUTPUT_ALLOW_CUSTOM_SHARED_CACHE |
+ 		AMFI_DYLD_OUTPUT_ALLOW_FALLBACK_PATHS |
+ 		AMFI_DYLD_OUTPUT_ALLOW_PRINT_VARS |
+-		AMFI_DYLD_OUTPUT_ALLOW_FAILED_LIBRARY_INSERTION;
++		AMFI_DYLD_OUTPUT_ALLOW_FAILED_LIBRARY_INSERTION |
++		// x86Sim: newer dyld_sim drops __interpose tuples without ALLOW_LIBRARY_INTERPOSING
++		AMFI_DYLD_OUTPUT_ALLOW_LIBRARY_INTERPOSING;
+ 
+ 	(void)input_flags;
+ 	*output_flags = allowEverything;
+@@ -5681,14 +5683,192 @@ static uint64_t        kdebug_trace_string(uint32_t debugid, uint64_t str_id, co
+ //int             (*amfi_check_dyld_policy_self)(uint64_t input_flags, uint64_t* output_flags);
+ #endif
+ 
++#if defined(DARLING) && defined(__arm64__)
++#include <libkern/OSCacheControl.h>
++#include "dyld_tsd_rewrite.h"
++
++extern "C" unsigned long sys_thread_get_native_tsd_slot_offset(void);
++
++// The iOS simulator's shared cache reads the Darwin TSD base from TPIDRRO_EL0 (in libdyld's __tlv_get_addr: every
++// thread-local variable of every process, Darling's libsystem_kernel's included), which Linux keeps at 0. dyld_sim
++// maps the cache itself, through this helper, so each executable mapping of a cache file gets those reads rewritten
++// as dyld3 does for a private macOS cache (translateDarlingCacheTSD): a branch to a veneer that loads the base from
++// the native TLS slot libsystem_kernel fills, else the TSD trap. Only the reads are visited: their file offsets are
++// kept in "<cache>.darling-tsd" (one hex offset per line), written by the first process that maps the cache.
++// dyld cannot use snprintf (its libc's needs locale state): lowercase hex of `value`, no prefix; returns the length
++static int darlingHex(char* out, unsigned long long value)
++{
++	char digits[16];
++	int n = 0;
++	do { digits[n++] = "0123456789abcdef"[value & 15]; value >>= 4; } while ( value != 0 );
++	for (int i = 0; i < n; ++i)
++		out[i] = digits[n - 1 - i];
++	return n;
++}
++
++static void darlingSimCacheTSDSites(int fd, const char* cachePath, off_t fileOffset, size_t size,
++									const uint8_t* mapped, void (^site)(off_t))
++{
++	char sitesPath[PATH_MAX];
++	if ( strlcpy(sitesPath, cachePath, sizeof(sitesPath)) >= sizeof(sitesPath)
++		|| strlcat(sitesPath, ".darling-tsd", sizeof(sitesPath)) >= sizeof(sitesPath) )
++		return;
++	int sfd = ::open(sitesPath, O_RDONLY | O_CLOEXEC);
++	if ( sfd >= 0 ) {
++		struct stat st;
++		if ( ::fstat(sfd, &st) == 0 && st.st_size > 0 && st.st_size < (1 << 20) ) {
++			char* text = (char*)::mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, sfd, 0);
++			if ( text != MAP_FAILED ) {
++				const char* q = text;
++				const char* end = text + st.st_size;
++				while ( q < end ) {
++					off_t value = 0;
++					for (; q < end && *q != '\n'; ++q) {
++						char c = *q;
++						value = value * 16 + ((c >= '0' && c <= '9') ? c - '0' : (c | 0x20) - 'a' + 10);
++					}
++					++q;
++					if ( value >= fileOffset && value < fileOffset + (off_t)size )
++						site(value);
++				}
++				::munmap(text, (size_t)st.st_size);
++			}
++		}
++		::close(sfd);
++		return;
++	}
++	// No list yet: scan this mapping, and every executable mapping of the file for the list
++	struct stat cst;
++	if ( ::fstat(fd, &cst) != 0 )
++		return;
++	char header[0x400];
++	if ( ::pread(fd, header, sizeof(header), 0) != sizeof(header) )
++		return;
++	uint32_t mappingOffset = *(uint32_t*)(header + 16), mappingCount = *(uint32_t*)(header + 20);
++	if ( mappingCount > 16 || mappingOffset + 32 * mappingCount > sizeof(header) )
++		return;
++	char tmpPath[PATH_MAX + 24];
++	strlcpy(tmpPath, sitesPath, sizeof(tmpPath));
++	size_t tmpLength = strlen(tmpPath);
++	tmpPath[tmpLength++] = '.';
++	tmpPath[tmpLength + darlingHex(tmpPath + tmpLength, (unsigned long long)getpid())] = '\0';
++	int out = ::open(tmpPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
++	for (uint32_t m = 0; m < mappingCount; ++m) {
++		const uint64_t* map = (const uint64_t*)(header + mappingOffset + 32 * m);
++		uint32_t initProt = *(const uint32_t*)(header + mappingOffset + 32 * m + 28);
++		if ( !(initProt & VM_PROT_EXECUTE) )
++			continue;
++		off_t start = (off_t)map[2];
++		size_t length = (size_t)map[1];
++		const uint32_t* words = (const uint32_t*)::mmap(NULL, length, PROT_READ, MAP_PRIVATE, fd, start);
++		if ( words == MAP_FAILED )
++			continue;
++		for (size_t i = 0; i < length / 4; ++i) {
++			uint32_t reg;
++			if ( !dyld_tsd_is_tpidrro_read(words[i], &reg) && !dyld_cpu_is_tpidr_read(words[i], &reg) )
++				continue;
++			off_t at = start + (off_t)(4 * i);
++			if ( out >= 0 ) {
++				char line[24];
++				int n = darlingHex(line, (unsigned long long)at);
++				line[n++] = '\n';
++				(void)::write(out, line, n);
++			}
++			if ( at >= fileOffset && at < fileOffset + (off_t)size )
++				site(at);
++		}
++		::munmap((void*)words, length);
++	}
++	if ( out >= 0 ) {
++		::close(out);
++		if ( ::rename(tmpPath, sitesPath) != 0 )
++			::unlink(tmpPath);
++	}
++}
++
++static void darlingTranslateSimCacheTSD(void* mapped, size_t size, int prot, int fd, off_t fileOffset)
++{
++	char cachePath[PATH_MAX];
++	if ( ::fcntl(fd, F_GETPATH, cachePath) != 0 )
++		return;
++	unsigned long slot = sys_thread_get_native_tsd_slot_offset();
++	__block uint32_t* veneers = NULL;
++	__block size_t veneersUsed = 0;
++	const size_t veneersSize = 0x4000;
++	darlingSimCacheTSDSites(fd, cachePath, fileOffset, size, (const uint8_t*)mapped, ^(off_t at) {
++		uint32_t* insn = (uint32_t*)((uint8_t*)mapped + (at - fileOffset));
++		uint32_t reg, replacement;
++		void* page = (void*)((uintptr_t)insn & ~(uintptr_t)0x3fff);
++		if ( dyld_tsd_is_tpidrro_read(*insn, &reg) ) {
++			replacement = (reg == 31) ? DYLD_A64_NOP : (DYLD_A64_UDF_TSD_TRAP | reg);
++			if ( reg != 31 && dyld_tsd_slot_offset_valid(slot) ) {
++				if ( veneers == NULL ) {
++					// below the mapping, within a branch's reach (+-128 MiB) of its first 120 MiB
++					for (uintptr_t below = 0x100000; below <= 0x4000000 && veneers == NULL; below += 0x100000) {
++						void* want = (void*)(((uintptr_t)mapped - below) & ~(uintptr_t)0x3fff);
++						void* got = ::mmap(want, veneersSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
++						if ( got == want )
++							veneers = (uint32_t*)got;
++						else if ( got != MAP_FAILED )
++							::munmap(got, veneersSize);
++					}
++				}
++				uint32_t entry;
++				uint32_t* code = veneers ? veneers + veneersUsed / 4 : NULL;
++				if ( code && veneersUsed + 4 * DYLD_TSD_VENEER_WORDS <= veneersSize
++					&& dyld_tsd_branch((uintptr_t)insn, (uintptr_t)code, &entry)
++					&& dyld_tsd_build_veneer(code, (uintptr_t)code, (uintptr_t)insn + 4, reg, slot) ) {
++					veneersUsed += 4 * DYLD_TSD_VENEER_WORDS;
++					replacement = entry;
++				}
++			}
++		} else if ( dyld_cpu_is_tpidr_read(*insn, &reg) ) {
++			replacement = (reg == 31) ? DYLD_A64_NOP : (DYLD_A64_MOVZ_X | reg);
++		} else {
++			return;
++		}
++		if ( ::mprotect(page, 0x4000, PROT_READ | PROT_WRITE) != 0 )
++			return;
++		*insn = replacement;
++		sys_icache_invalidate(insn, 4);
++		::mprotect(page, 0x4000, prot);
++	});
++	if ( veneers != NULL ) {
++		sys_icache_invalidate(veneers, veneersUsed);
++		::mprotect(veneers, veneersSize, PROT_READ | PROT_EXEC);
++	}
++}
++
++static void* darlingSimMmap(void* addr, size_t len, int prot, int flags, int fd, off_t offset)
++{
++	void* result = ::mmap(addr, len, prot, flags, fd, offset);
++	if ( result != MAP_FAILED && (prot & PROT_EXEC) && fd >= 0 && (flags & MAP_PRIVATE) ) {
++		char magic[8];
++		if ( ::pread(fd, magic, sizeof(magic), 0) == sizeof(magic) && memcmp(magic, "dyld_v1", 7) == 0 )
++			darlingTranslateSimCacheTSD(result, len, prot, fd, offset);
++	}
++	return result;
++}
++#endif
++
++// Added in version 15-18 for newer dyld_sims (the iOS 27 simulator's): host functions dyld_sim calls through the table.
++extern "C" int getattrlistbulk(int, void*, void*, size_t, uint64_t);
++extern "C" int getattrlist(const char*, void*, void*, size_t, unsigned int);
++extern "C" int getfsstat(struct statfs*, int, int);
++static void notifyMonitorOfDyldBeforeInitializers() {}
++
+ static const SyscallHelpers sSysCalls = {
+-		14,
++		18,
+ 		// added in version 1
+ 		&open,
+ 		&close, 
+ 		&pread, 
+ 		&write, 
++#if defined(DARLING) && defined(__arm64__)
++		&darlingSimMmap,
++#else
+ 		&mmap, 
++#endif
+ 		&munmap, 
+ 		&madvise,
+ 		&stat, 
+@@ -5757,9 +5937,65 @@ static const SyscallHelpers sSysCalls = {
+ 		&fstat,
+ 		&vm_copy,
+ 		// Added in version 14
+-		&task_dyld_process_info_notify_get
++		&task_dyld_process_info_notify_get,
++		// Added in version 15
++		&fsgetpath,
++		&getattrlistbulk,
++		// Added in version 16
++		&getattrlist,
++		&getfsstat,
++		// Added in version 17
++		&notifyMonitorOfDyldBeforeInitializers,
++		// Added in version 18
++		&sysctlbyname
+ };
+ 
++#if defined(DARLING) && defined(__arm64__)
++#include <libkern/OSCacheControl.h>
++#include "dyld_tsd_rewrite.h"
++
++// dyld_sim, like a macOS arm64 cache (see translateDarlingCacheTSD), reads the Darwin TSD base from TPIDRRO_EL0,
++// which a Linux process cannot set, and the CPU number from TPIDR_EL0, the Linux thread pointer here. After its
++// private mapping each such read becomes the TSD trap libsystem_kernel emulates (tsd_trap.h) or CPU 0.
++static const char* darlingTranslateSimTSD(uintptr_t loadAddress, uintptr_t preferredLoadAddress,
++										  const struct load_command* cmds, uint32_t cmd_count)
++{
++	const struct load_command* cmd = cmds;
++	for (uint32_t i = 0; i < cmd_count; ++i) {
++		if ( cmd->cmd == LC_SEGMENT_COMMAND ) {
++			const struct macho_segment_command* seg = (struct macho_segment_command*)cmd;
++			if ( (seg->initprot & VM_PROT_EXECUTE) && seg->filesize != 0 ) {
++				void* start = (void*)(seg->vmaddr - preferredLoadAddress + loadAddress);
++				size_t size = (size_t)seg->filesize;
++				if ( ::mprotect(start, size, PROT_READ | PROT_WRITE) != 0 )
++					return "dyld_sim text could not be made writable for TSD translation";
++				bool changed = false;
++				for (uint32_t* insn = (uint32_t*)start; insn != (uint32_t*)start + size / 4; ++insn) {
++					uint32_t reg;
++					if ( dyld_tsd_is_tpidrro_read(*insn, &reg) )
++						*insn = (reg == 31) ? DYLD_A64_NOP : (DYLD_A64_UDF_TSD_TRAP | reg);
++					else if ( dyld_cpu_is_tpidr_read(*insn, &reg) )
++						*insn = (reg == 31) ? DYLD_A64_NOP : (DYLD_A64_MOVZ_X | reg);
++					else
++						continue;
++					changed = true;
++				}
++				if ( changed )
++					sys_icache_invalidate(start, size);
++				int protection = 0;
++				if ( seg->initprot & VM_PROT_READ )    protection |= PROT_READ;
++				if ( seg->initprot & VM_PROT_WRITE )   protection |= PROT_WRITE;
++				if ( seg->initprot & VM_PROT_EXECUTE ) protection |= PROT_EXEC;
++				if ( ::mprotect(start, size, protection) != 0 )
++					return "dyld_sim text protections could not be restored after TSD translation";
++			}
++		}
++		cmd = (const struct load_command*)(((char*)cmd)+cmd->cmdsize);
++	}
++	return NULL;
++}
++#endif
++
+ __attribute__((noinline))
+ static const char* useSimulatorDyld(int fd, const macho_header* mainExecutableMH, const char* dyldPath,
+ 								int argc, const char* argv[], const char* envp[], const char* apple[],
+@@ -5932,6 +6168,11 @@ static const char* useSimulatorDyld(int fd, const macho_header* mainExecutableMH
+ 	}
+ 	close(fd);
+ 
++#if defined(DARLING) && defined(__arm64__)
++	if ( const char* tsdError = darlingTranslateSimTSD(loadAddress, preferredLoadAddress, cmds, cmd_count) )
++		return tsdError;
++#endif
++
+ 	// Walk newly mapped dyld_sim load commands to find entry point
+ 	uintptr_t entry = 0;
+ 	bool unusedUsesCRT = false;
+diff --git a/src/dyldSyscallInterface.h b/src/dyldSyscallInterface.h
+index 0dc540f..b69ba85 100644
+--- a/src/dyldSyscallInterface.h
++++ b/src/dyldSyscallInterface.h
+@@ -47,6 +47,8 @@ __END_DECLS
+ #include <sys/ioctl.h>
+ #include <sys/kdebug_private.h>
+ #include <sys/mman.h>
++#include <sys/mount.h>
++#include <sys/sysctl.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
+ #include <System/sys/reason.h>
+@@ -145,6 +147,16 @@ namespace dyld {
+ 		DYLD_SYSCALL_VTABLE_ENTRY(vm_copy);
+         // Add in version 14
+         DYLD_SYSCALL_VTABLE_ENTRY(task_dyld_process_info_notify_get);
++		// Added in version 15
++		ssize_t	(*fsgetpath)(char* result, size_t resultBufferSize, fsid_t* fsID, uint64_t objID);
++		int		(*getattrlistbulk)(int dirfd, void* attrList, void* attrBuf, size_t attrBufSize, uint64_t options);
++		// Added in version 16
++		int		(*getattrlist)(const char* path, void* attrList, void* attrBuf, size_t attrBufSize, unsigned int options);
++		int		(*getfsstat)(struct statfs* buf, int bufsize, int flags);
++		// Added in version 17
++		void	(*notifyMonitorOfDyldBeforeInitializers)(void);
++		// Added in version 18
++		int		(*sysctlbyname)(const char* name, void* oldp, size_t* oldlenp, void* newp, size_t newlen);
+ 	};
+ 	extern const struct SyscallHelpers* gSyscallHelpers;
+ 

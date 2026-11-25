@@ -1,0 +1,14 @@
+diff --git a/src/nw/connection.m b/src/nw/connection.m
+index c4946e1..1f7c5c2 100644
+--- a/src/nw/connection.m
++++ b/src/nw/connection.m
+@@ -41,7 +41,8 @@ void darling_nw_tls_free(darling_nw_tls_t t);
+ 
+ // The default contexts are real context objects, created when the library loads. The data symbols clients
+ // import are aliases of the storage below.
+-static nw_content_context_t default_message_context, default_stream_context, final_message_context;
++// used: keeps them out of AArch64 GlobalMerge, which would leave the asm aliases below undefined
++__attribute__((used)) static nw_content_context_t default_message_context, default_stream_context, final_message_context;
+ 
+ __attribute__((constructor)) static void create_default_contexts(void) {
+ 	default_message_context = darling_nw_content_context_create("Default Message", false);

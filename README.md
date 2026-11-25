@@ -136,6 +136,7 @@ metal2vulkan. agent-sim builds the agent-facing product on top of it:
 - [docs/BENCHMARKS.md](docs/BENCHMARKS.md): speed, memory, several phones, snapshots
 - [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md): what does not work yet and why
 - [docs/ROADMAP.md](docs/ROADMAP.md): what comes next
+- [docs/ARM64.md](docs/ARM64.md): the runtime natively on arm64 Linux, no translator (work in progress)
 - [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md)
 
 ## Credits
@@ -149,4 +150,5 @@ Apple's runtimes are downloaded from Apple onto your own machine and are never p
 
 ## License
 
-[Apache-2.0](LICENSE), except the patches in `patches/x86sim`, which follow x86Sim's GPL-3.0-or-later.
+[Apache-2.0](LICENSE), except the patches in `patches/x86sim`, which follow x86Sim's GPL-3.0-or-later, and those in
+`patches/darling-arm64`, which follow Darling's and x86Sim's licenses.

@@ -1,0 +1,87 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 005530c..06cba23 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -40,6 +40,7 @@ set(pthread_common_sources
+ 	pthread_asm.S
+ )
+ set(pthread_sources
++	simcompat.c
+ 	${pthread_common_sources}
+ 	variants/pthread_cancelable_cancel.c
+ )
+diff --git a/src/pthread.c b/src/pthread.c
+index 0e28c2c..dfc5483 100644
+--- a/src/pthread.c
++++ b/src/pthread.c
+@@ -1983,6 +1983,14 @@ __pthread_init(const struct _libpthread_functions *pthread_funcs,
+ 	_main_thread_ptr = thread;
+ 	// this needs to be done early so that pthread_self() works in TSAN
+ 	_pthread_init_signature(thread);
++#ifdef DARLING
++	// The structure belongs to the dyld that started the process. A foreign one (the iOS simulator's dyld_sim, with
++	// its own libpthread.a) leaves thread_id 0 here: pthread_threadid_np() said 0 on the main thread and
++	// error-checking mutexes refused it (EDEADLK; backboardd aborted in IOHIDEventSystem).
++	if (thread->thread_id == 0) {
++		_pthread_set_self_internal(thread);
++	}
++#endif
+ 
+ 	//
+ 	// Get host information
+@@ -2326,6 +2334,11 @@ _pthread_wqthread_priority(int flags)
+ 	if (flags & WQ_FLAG_THREAD_OVERCOMMIT) {
+ 		pp |= _PTHREAD_PRIORITY_OVERCOMMIT_FLAG;
+ 	}
++	// x86Sim: a cooperative pool thread (XNU's WQ_FLAG_THREAD_COOPERATIVE upcall flag) hands libdispatch a
++	// priority with _PTHREAD_PRIORITY_COOPERATIVE_FLAG, so it drains the cooperative root queue of its QoS
++	if (flags & 0x01000000 /* WQ_FLAG_THREAD_COOPERATIVE */) {
++		pp |= 0x08000000u /* _PTHREAD_PRIORITY_COOPERATIVE_FLAG */;
++	}
+ 	if (flags & WQ_FLAG_THREAD_PRIO_QOS) {
+ 		qos = (thread_qos_t)(flags & WQ_FLAG_THREAD_PRIO_MASK);
+ 		pp = _pthread_priority_make_from_thread_qos(qos, 0, pp);
+@@ -2644,6 +2657,25 @@ _pthread_workqueue_addthreads(int numthreads, pthread_priority_t priority)
+ 	return res;
+ }
+ 
++// x86Sim: the cooperative pool (Swift concurrency's global executor). Ask for cooperative threads as XNU's
++// libpthread does (WQOPS_QUEUE_REQTHREADS2); libsystem_kernel's workqueue starts them with
++// WQ_FLAG_THREAD_COOPERATIVE and _pthread_wqthread_priority passes _PTHREAD_PRIORITY_COOPERATIVE_FLAG on to
++// libdispatch. simcompat.c used to request ordinary threads: they drained the plain root queue of that QoS, and
++// jobs on the cooperative queues (Task.detached, continuations resumed off the main actor) never ran.
++__attribute__((visibility("default")))
++int
++_pthread_workqueue_add_cooperativethreads(int numthreads, pthread_priority_t priority)
++{
++	if (__libdispatch_workerfunction == NULL) {
++		return EPERM;
++	}
++	int res = __workq_kernreturn(0x30 /* WQOPS_QUEUE_REQTHREADS2 */, NULL, numthreads, (int)priority);
++	if (res == -1) {
++		res = errno;
++	}
++	return res;
++}
++
+ int
+ _pthread_workqueue_set_event_manager_priority(pthread_priority_t priority)
+ {
+diff --git a/src/simcompat.c b/src/simcompat.c
+new file mode 100644
+index 0000000..97c1498
+--- /dev/null
++++ b/src/simcompat.c
+@@ -0,0 +1,12 @@
++/*
++ * iOS simulator (iOS 26) compatibility exports for libsystem_pthread.
++ */
++
++#define EXPORT __attribute__((visibility("default")))
++
++// Workgroups (os_workgroup) are not supported; accepting the callbacks is enough
++EXPORT int pthread_install_workgroup_functions_np(const void* functions)
++{
++	return 0;
++}
++

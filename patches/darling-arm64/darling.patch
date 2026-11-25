@@ -1,0 +1,755 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e41ee409..0f490f65 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -290,6 +290,8 @@ if (Python3_Interpreter_FOUND)
+ 		COMMAND sh ${CMAKE_SOURCE_DIR}/tests/headers/target-conditionals.sh ${CMAKE_SOURCE_DIR})
+ endif()
+ 
++# Host-side unit tests, run with ctest from the build directory
++
+ if (DEBIAN_PACKAGING)
+ 	set(COMPONENTS_DEFAULT "all")
+ else()
+diff --git a/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/mach_eventlink_types.h b/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/mach_eventlink_types.h
+new file mode 120000
+index 00000000..2ab5de37
+--- /dev/null
++++ b/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/mach_eventlink_types.h
+@@ -0,0 +1 @@
++../../../../../../../../../src/external/xnu/osfmk/mach/mach_eventlink_types.h
+\ No newline at end of file
+diff --git a/src/launchd/src/core.c b/src/launchd/src/core.c
+index 0879316e..f793c143 100644
+--- a/src/launchd/src/core.c
++++ b/src/launchd/src/core.c
+@@ -451,6 +451,8 @@ static jobmgr_t jobmgr_do_garbage_collection(jobmgr_t jm);
+ static bool jobmgr_label_test(jobmgr_t jm, const char *str);
+ static void jobmgr_reap_bulk(jobmgr_t jm, struct kevent *kev);
+ #ifdef DARLING
++static void darling_reap_strays(void);
++static int darling_reap_strays_timer;
+ static void jobmgr_reap_orphans(void);
+ static int orphan_reap_timer;
+ #endif
+@@ -4302,6 +4304,69 @@ jobmgr_reap_bulk(jobmgr_t jm, struct kevent *kev)
+ 	}
+ }
+ 
++#ifdef DARLING
++// x86Sim: launchd as the container's pid 1 reaps stray zombies. XNU reaps an orphan itself once it is reparented to
++// initproc (P_LIST_DEADPARENT: reap_child_locked in proc_exit), so launchd only ever waits for its jobs. On Linux the
++// orphan is reparented to the pid namespace's init (this launchd) and stays a zombie until init waits for it: when a
++// launchd_sim died (or was SIGKILLed by boot-a64.sh's stop_prefix), every process it had started was reparented here,
++// and each of them that exited later (an app jetsam.py killed, a daemon) stayed Z forever. Every 5 s, the zombie
++// children (Linux /proc: the container's own procfs, pids are this namespace's) that are not a job are waited for.
++static void
++darling_reap_strays(void)
++{
++	DIR *d = opendir("/proc/self/task");
++	if (!d) {
++		return;
++	}
++	struct dirent *de;
++	while ((de = readdir(d))) {
++		if (de->d_name[0] < '0' || de->d_name[0] > '9') {
++			continue;
++		}
++		char path[64], buf[4096];
++		snprintf(path, sizeof(path), "/proc/self/task/%s/children", de->d_name);
++		int fd = open(path, O_RDONLY);
++		if (fd < 0) {
++			continue;
++		}
++		ssize_t n = read(fd, buf, sizeof(buf) - 1);
++		close(fd);
++		if (n <= 0) {
++			continue;
++		}
++		buf[n] = 0;
++		char *save = NULL;
++		for (char *t = strtok_r(buf, " \n", &save); t; t = strtok_r(NULL, " \n", &save)) {
++			pid_t p = (pid_t)atoi(t);
++			if (p <= 1 || jobmgr_find_by_pid_deep(root_jobmgr, p, true)) {
++				continue;
++			}
++			char st[512];
++			snprintf(path, sizeof(path), "/proc/%d/stat", p);
++			int sfd = open(path, O_RDONLY);
++			if (sfd < 0) {
++				continue;
++			}
++			ssize_t sn = read(sfd, st, sizeof(st) - 1);
++			close(sfd);
++			if (sn <= 0) {
++				continue;
++			}
++			st[sn] = 0;
++			char *rp = strrchr(st, ')');
++			if (!rp || rp[1] != ' ' || rp[2] != 'Z') {
++				continue;
++			}
++			int status = 0;
++			if (waitpid(p, &status, WNOHANG) == p) {
++				jobmgr_log(root_jobmgr, LOG_NOTICE, "Reaped stray zombie PID %d (status 0x%x)", p, status);
++			}
++		}
++	}
++	closedir(d);
++}
++#endif
++
+ #ifdef DARLING
+ void
+ jobmgr_reap_orphans(void)
+@@ -4375,6 +4440,10 @@ jobmgr_callback(void *obj, struct kevent *kev)
+ 	case EVFILT_TIMER:
+ 		if (kev->ident == (uintptr_t)&sorted_calendar_events) {
+ 			calendarinterval_callback();
++#ifdef DARLING
++		} else if (kev->ident == (uintptr_t)&darling_reap_strays_timer) {
++			darling_reap_strays();
++#endif
+ 		} else if (kev->ident == (uintptr_t)jm) {
+ 			jobmgr_log(jm, LOG_DEBUG, "Shutdown timer firing.");
+ 			jobmgr_still_alive_with_check(jm);
+@@ -6989,6 +7058,11 @@ jobmgr_new(jobmgr_t jm, mach_port_t requestorport, mach_port_t transfer_port, bo
+ 		(void)jobmgr_assumes_zero_p(jmr, kevent_mod((uintptr_t)&orphan_reap_timer, EVFILT_TIMER, EV_ADD, NOTE_SECONDS, 5, jmr));
+ #endif
+ 		(void)jobmgr_assumes_zero_p(jmr, kevent_mod(0, EVFILT_FS, EV_ADD, VQ_MOUNT|VQ_UNMOUNT|VQ_UPDATE, 0, jmr));
++#ifdef DARLING
++		if (pid1_magic) {
++			(void)jobmgr_assumes_zero_p(jmr, kevent_mod((uintptr_t)&darling_reap_strays_timer, EVFILT_TIMER, EV_ADD, NOTE_SECONDS, 5, jmr));
++		}
++#endif
+ 	}
+ 
+ 	if (name && !skip_init) {
+diff --git a/src/startup/launcher-env.c b/src/startup/launcher-env.c
+index eaf255ab..b9fad7b5 100644
+--- a/src/startup/launcher-env.c
++++ b/src/startup/launcher-env.c
+@@ -104,6 +104,29 @@ static bool serverMayGet(const char* entry)
+ 	return false;
+ }
+ 
++// x86Sim: the server's environment is also the container's (launchd and every daemon it starts inherit it), and the
++// simulator stack configures itself through it: the X86SIM_*, A64_*, SIMULATOR_*, SIMFB_* and SIMHID_* settings, DPREFIX
++// (how cli/libexec/arm64/boot-a64.sh finds a container's processes), and darlingserver's own x86Sim knobs. None of these
++// names is read by the host's dynamic loader or a shell, so the setuid launcher passes them on too.
++static bool x86simServerMayGet(const char* entry)
++{
++	static const char* const prefixes[] = { "X86SIM_", "A64_", "SIMULATOR_", "SIMFB_", "SIMHID_" };
++	static const char* const names[] = { "DPREFIX", "DSERVER_INLINE", "DSERVER_NICE", "DSERVER_LOG_CATEGORIES" };
++
++	for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++)
++	{
++		size_t len = strlen(prefixes[i]);
++		if (strncmp(entry, prefixes[i], len) == 0 && entry[len] != '\0' && entry[len] != '=' && strchr(entry, '=') != NULL)
++			return true;
++	}
++	for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
++	{
++		if (launcherEnvEntryIs(entry, names[i]))
++			return true;
++	}
++	return false;
++}
++
+ char** launcherServerEnvironment(char* const* envp, bool restricted)
+ {
+ 	size_t count = 0, n = 0;
+@@ -122,7 +145,7 @@ char** launcherServerEnvironment(char* const* envp, bool restricted)
+ 
+ 	for (size_t i = 0; i < count; i++)
+ 	{
+-		if (restricted ? serverMayGet(envp[i]) : launcherGuestMayGet(envp[i]))
++		if (restricted ? (serverMayGet(envp[i]) || x86simServerMayGet(envp[i])) : launcherGuestMayGet(envp[i]))
+ 			result[n++] = envp[i];
+ 	}
+ 	result[n] = NULL;
+diff --git a/src/startup/launcher-ids.c b/src/startup/launcher-ids.c
+index 5488292d..addec73d 100644
+--- a/src/startup/launcher-ids.c
++++ b/src/startup/launcher-ids.c
+@@ -151,8 +151,10 @@ bool launcherDropPrivileges(const struct launcher_ids* ids)
+ 	// Runs as root. The supplementary groups and the gids can only be changed
+ 	// while the uid is still 0, so they go first and the uids last. Setting the
+ 	// supplementary groups to the user's own list keeps exactly the access the
+-	// user had when starting the launcher.
+-	if (setgroups(ids->ngroups, ids->groups) != 0)
++	// user had when starting the launcher. When the list is already the user's
++	// it is left alone: in an unprivileged user namespace (x86Sim's userns mode,
++	// unshare -r) setgroups() is denied for good, and the list never changed.
++	if (!groupsAre(ids) && setgroups(ids->ngroups, ids->groups) != 0)
+ 		return false;
+ 	if (setresgid(gid, gid, gid) != 0)
+ 		return false;
+diff --git a/src/startup/launcher-server.c b/src/startup/launcher-server.c
+index 4587b98b..eab6f6da 100644
+--- a/src/startup/launcher-server.c
++++ b/src/startup/launcher-server.c
+@@ -425,7 +425,11 @@ int launcherFindPrefixServer(const char* procPath, const char* prefix, uid_t uid
+ 			int saved = errno;
+ 			close(processfd);
+ 			errno = saved;
+-			if (errno == ENOENT || errno == ESRCH)
++			// EACCES/EPERM: a server of another user namespace (the userns mode's launcher runs as root of its own
++			// namespace, where every server of the same real user matches the uid above, but only those of its own
++			// namespace may be inspected). It is not one this launcher could join, and refusing here kept a userns
++			// container from starting while any other x86Sim container (a system-mode phone) ran.
++			if (errno == ENOENT || errno == ESRCH || errno == EACCES || errno == EPERM)
+ 				continue;
+ 			goto error;
+ 		}
+diff --git a/src/startup/mldr/commpage.c b/src/startup/mldr/commpage.c
+index 19fa5cd2..15b7e1e6 100644
+--- a/src/startup/mldr/commpage.c
++++ b/src/startup/mldr/commpage.c
+@@ -87,6 +87,11 @@ void commpage_setup(bool _64bit)
+ 	*kernel_page_shift = *user_page_shift = (uint8_t)__builtin_ctzl(sysconf(_SC_PAGESIZE));
+ 
+ 	my_caps = get_cpu_caps();
++	// x86Sim: the cache line size bits (kCache32/64/128) were never set. vImage (vImageBuffer_Init, also its copy in
++	// libCGInterfaces) aligns rowBytes to twice the cache line size read from here: with 0 every rowBytes came out 0,
++	// vImageCreateCGImageFromBuffer then mmap()ed 0 bytes and failed, and MercuryPosterExtension (the default
++	// wallpaper) crashed creating its snapshot (Swift trap in vImage_Buffer.createCGImage). x86-64 lines are 64 bytes.
++	my_caps |= kCache64;
+ 	if (*ncpus == 1)
+ 		my_caps |= kUP;
+ 
+diff --git a/src/startup/mldr/elfcalls/elfcalls.c b/src/startup/mldr/elfcalls/elfcalls.c
+index ca8f4722..44103639 100644
+--- a/src/startup/mldr/elfcalls/elfcalls.c
++++ b/src/startup/mldr/elfcalls/elfcalls.c
+@@ -86,6 +86,8 @@ static int __dserver_process_lifetime_pipe_refresh() {
+ 	return pipe[0];
+ }
+ 
++extern void __mldr_socket_bitmap_postfork_child(void);
++
+ void elfcalls_make(struct elf_calls* calls)
+ {
+ 	calls->dlopen = dlopen_simple;
+@@ -131,6 +133,7 @@ void elfcalls_make(struct elf_calls* calls)
+ 
+ 	calls->dserver_get_process_lifetime_pipe = __dserver_get_process_lifetime_pipe;
+ 	calls->dserver_process_lifetime_pipe_refresh = __dserver_process_lifetime_pipe_refresh;
++	calls->postfork_child = __mldr_socket_bitmap_postfork_child;  // x86Sim: see elfcalls.h
+ 	calls->dserver_close_process_lifetime_pipe = __mldr_close_process_lifetime_pipe;
+ 
+ 	calls->native_fork = __mldr_native_fork;
+diff --git a/src/startup/mldr/elfcalls/elfcalls.h b/src/startup/mldr/elfcalls/elfcalls.h
+index 0ac781af..4669bcbe 100644
+--- a/src/startup/mldr/elfcalls/elfcalls.h
++++ b/src/startup/mldr/elfcalls/elfcalls.h
+@@ -72,6 +72,13 @@ struct elf_calls
+ 	int (*dserver_process_lifetime_pipe_refresh)(void);
+ 	void (*dserver_close_process_lifetime_pipe)(int fd);
+ 
++	// x86Sim (2026-11-13): first thing in a fork's child (sys_fork, before guard_table_postfork_child closes the
++	// parent's descriptors through mldr's socket bitmap): mldr's locks as fresh ones. The fork is the raw syscall
++	// (glibc's fork() needs glibc's thread pointer, which Darling threads do not keep: Darling hung at boot with it),
++	// so a lock another thread of the parent held at the fork stayed held in the child: launchd_sim's spawn
++	// children hung in socket_bitmap_put (a boot stuck black, every process idle).
++	void (*postfork_child)(void);
++
+ 	// fork() through the host libc; returns the child's PID, 0 in the child,
+ 	// or a negative Linux errno
+ 	int (*native_fork)(void);
+@@ -79,6 +86,8 @@ struct elf_calls
+ 	// The Darwin RLIMIT_NOFILE soft and hard limits passed on by the Darling
+ 	// process that exec'd this one. Returns 0 and fills limits, or -1 if
+ 	// there are none (the Linux limit applies).
++	// (x86Sim: after postfork_child, which keeps the offset it had: a running container's older libsystem_kernel
++	// with a newer mldr still finds it)
+ 	int (*inherited_nofile_limit)(unsigned int limits[2]);
+ };
+ 
+diff --git a/src/startup/mldr/mldr.c b/src/startup/mldr/mldr.c
+index 581c98f6..fda56009 100644
+--- a/src/startup/mldr/mldr.c
++++ b/src/startup/mldr/mldr.c
+@@ -180,6 +180,180 @@ void* __mldr_main_stack_top = NULL;
+ static int kernel_major = -1;
+ static int kernel_minor = -1;
+ 
++#ifdef __x86_64__
++// x86Sim: the iOS simulator's dyld shared cache. dyld_sim maps it privately with MAP_FIXED at the addresses the cache
++// was built for (x86_64: SHARED_REGION_BASE_X86_64 0x7FF800000000, 6 subcaches, 24 GB, no slide info), so it can't
++// move and every process maps the same file pages at the same addresses (clean pages stay shared in the page cache).
++// On macOS that range is the shared region and nothing else lives there; on Linux it is where the kernel puts a
++// randomized stack and the top-down mmap area. Reserve it (PROT_NONE, no commit) before anything is loaded so later
++// mmaps avoid it and dyld_sim's MAP_FIXED mappings replace the reservation. Only for processes that are given a cache
++// (DYLD_SHARED_CACHE_DIR). If the range is taken (about half the time with Linux stack ASLR), re-exec once with
++// ADDR_NO_RANDOMIZE: the stack is then just below TASK_SIZE, above the range, and children inherit the personality.
++// If it still can't be reserved, hide DYLD_SHARED_CACHE_DIR so dyld_sim runs without the cache instead of mapping
++// over live memory.
++#define SIM_SHARED_REGION_BASE 0x7FF800000000ULL
++#define SIM_SHARED_REGION_SIZE 0x600000000ULL
++
++static void reserve_sim_shared_region(char** argv, char** envp)
++{
++	static const char var[] = "DYLD_SHARED_CACHE_DIR=";
++	char* found = NULL;
++	for (char** e = envp; *e != NULL; ++e) {
++		if (strncmp(*e, var, sizeof(var) - 1) == 0) {
++			found = *e;
++			break;
++		}
++	}
++	if (found == NULL || getenv("X86SIM_NO_SHARED_REGION") != NULL)
++		return;
++
++	void* p = mmap((void*) SIM_SHARED_REGION_BASE, SIM_SHARED_REGION_SIZE, PROT_NONE,
++		MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
++	if (p == (void*) SIM_SHARED_REGION_BASE)
++		return;
++	if (p != MAP_FAILED)
++		munmap(p, SIM_SHARED_REGION_SIZE); // a kernel without MAP_FIXED_NOREPLACE placed it elsewhere
++
++	int pers = personality(0xffffffff);
++	if (pers != -1 && !(pers & ADDR_NO_RANDOMIZE) && personality(pers | ADDR_NO_RANDOMIZE) != -1) {
++		execve("/proc/self/exe", argv, envp);
++		personality(pers);
++	}
++
++	fprintf(stderr, "mldr: shared region %#llx-%#llx is in use; running without the dyld shared cache\n",
++		SIM_SHARED_REGION_BASE, SIM_SHARED_REGION_BASE + SIM_SHARED_REGION_SIZE);
++	found[0] = '_'; // "_YLD_SHARED_CACHE_DIR": dyld_sim doesn't see it, children don't either
++}
++#endif
++
++#ifdef __x86_64__
++// x86Sim (arm64 plan, stage 1): Apple's arm64-only iOS-simulator binaries (iOS 27 runtime) run under a JIT. For an
++// arm64-only Mach-O, mldr re-executes itself on host/arm64host (an x86_64 macOS program installed next to mldr), which
++// starts like any Darling process and then runs the arm64 program in libarm64jit.so (dynarmic). DYLD_* variables are
++// renamed X86SIM_A64_DYLD_* so Darling's dyld doesn't act on them; libarm64jit gives them back to dyld_sim.
++// X86SIM_A64_EXE is the arm64 program (Darwin path); libsystem_kernel keys simulator behaviour on it.
++#define X86SIM_A64_SYSTEM_ROOT "/Volumes/SystemRoot"
++
++static bool is_arm64_only(const char* path)
++{
++	uint32_t buf[2 + 5 * 16];
++	int fd = open(path, O_RDONLY | O_CLOEXEC);
++	if (fd < 0)
++		return false;
++	ssize_t n = read(fd, buf, sizeof(buf));
++	close(fd);
++	if (n < 8)
++		return false;
++	if (buf[0] == MH_MAGIC_64)
++		return buf[1] == CPU_TYPE_ARM64;
++	if (buf[0] == FAT_CIGAM) {
++		uint32_t count = be32toh(buf[1]);
++		bool arm64 = false;
++		for (uint32_t i = 0; i < count && i < 16 && (ssize_t)((2 + 5 * (i + 1)) * 4) <= n; i++) {
++			uint32_t cpu = be32toh(buf[2 + 5 * i]);
++			if (cpu == CPU_TYPE_X86_64 || cpu == CPU_TYPE_X86)
++				return false;
++			if (cpu == CPU_TYPE_ARM64)
++				arm64 = true;
++		}
++		return arm64;
++	}
++	return false;
++}
++
++static void arm64_reexec(const char* filename, char** argv, char** envp, struct load_results* lr)
++{
++	static char self[4096], host[4200], jit[4200], darwin_path[8192];
++	if (!is_arm64_only(filename))
++		return;
++	ssize_t len = readlink("/proc/self/exe", self, sizeof(self) - 1);
++	if (len <= 0) {
++		fprintf(stderr, "mldr: cannot find myself\n");
++		exit(1);
++	}
++	self[len] = '\0';
++	char* slash = strrchr(self, '/');
++	*slash = '\0';
++	snprintf(host, sizeof(host), "%s/arm64host", self);
++	snprintf(jit, sizeof(jit), "%s/libarm64jit.so", self);
++	*slash = '/';
++	if (access(host, R_OK) != 0 || access(jit, R_OK) != 0) {
++		fprintf(stderr, "mldr: %s is an arm64 binary and the arm64 runtime (%s, %s) is not installed\n", filename, host, jit);
++		exit(1);
++	}
++
++	// The program's path as Darwin processes see it (as setup_stack64 computes executable_path)
++	if (lr->root_path && strncmp(filename, lr->root_path, lr->root_path_length) == 0)
++		snprintf(darwin_path, sizeof(darwin_path), "%s", filename + lr->root_path_length);
++	else if (lr->root_path)
++		snprintf(darwin_path, sizeof(darwin_path), X86SIM_A64_SYSTEM_ROOT "%s", filename);
++	else
++		snprintf(darwin_path, sizeof(darwin_path), "%s", filename);
++
++	size_t envc = 0;
++	while (envp[envc])
++		envc++;
++	char** nenv = malloc((envc + 3) * sizeof(char*));
++	size_t k = 0;
++	for (size_t i = 0; i < envc; i++) {
++		if (strncmp(envp[i], "X86SIM_A64_EXE=", sizeof("X86SIM_A64_EXE=") - 1) == 0 || strncmp(envp[i], "X86SIM_A64_JIT=", sizeof("X86SIM_A64_JIT=") - 1) == 0)
++			continue;
++		if (strncmp(envp[i], "DYLD_", 5) == 0) {
++			char* r = malloc(strlen(envp[i]) + sizeof("X86SIM_A64_"));
++			strcpy(r, "X86SIM_A64_");
++			strcat(r, envp[i]);
++			nenv[k++] = r;
++		} else
++			nenv[k++] = envp[i];
++	}
++	nenv[k] = malloc(strlen(darwin_path) + sizeof("X86SIM_A64_EXE="));
++	strcpy(nenv[k], "X86SIM_A64_EXE=");
++	strcat(nenv[k++], darwin_path);
++	nenv[k] = malloc(strlen(jit) + sizeof("X86SIM_A64_JIT="));
++	strcpy(nenv[k], "X86SIM_A64_JIT=");
++	strcat(nenv[k++], jit);
++	nenv[k] = NULL;
++
++	// argv[1..] are the program's argv in both invocation forms ("mldr!file argv0 ..." and "mldr file ...")
++	size_t argc = 0;
++	while (argv[argc])
++		argc++;
++	char** nargv = malloc((argc + 2) * sizeof(char*));
++	nargv[0] = malloc(strlen(self) + strlen(host) + 2);
++	sprintf(nargv[0], "%s!%s", self, host);
++	for (size_t i = 1; i < argc; i++)
++		nargv[i] = argv[i];
++	if (argc < 2) {
++		nargv[1] = (char*) filename;
++		argc = 2;
++	}
++	nargv[argc] = NULL;
++	execve("/proc/self/exe", nargv, nenv);
++	fprintf(stderr, "mldr: cannot re-execute for %s: %s\n", filename, strerror(errno));
++	exit(1);
++}
++
++// In the re-executed arm64host: keep the arm64 shared cache's fixed range (0x1C0000000, 4 GB) free for dyld_sim, and
++// tell darlingserver the arm64 program is the executable (proc_pidpath, the process's platform).
++static const char* arm64_host_setup(struct load_results* lr)
++{
++	static char linux_path[8192];
++	const char* exe = getenv("X86SIM_A64_EXE");
++	if (exe == NULL)
++		return NULL;
++	mmap((void*) 0x1C0000000ULL, 0x100000000ULL, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
++	// the re-exec through /proc/self/exe named the Linux task "exe" (launchd's logs, proc_name): use the program's name
++	const char* base = strrchr(exe, '/');
++	prctl(PR_SET_NAME, base ? base + 1 : exe, 0, 0, 0);
++	if (strncmp(exe, X86SIM_A64_SYSTEM_ROOT "/", sizeof(X86SIM_A64_SYSTEM_ROOT)) == 0)
++		snprintf(linux_path, sizeof(linux_path), "%s", exe + sizeof(X86SIM_A64_SYSTEM_ROOT) - 1);
++	else if (lr->root_path)
++		snprintf(linux_path, sizeof(linux_path), "%s%s", lr->root_path, exe);
++	else
++		snprintf(linux_path, sizeof(linux_path), "%s", exe);
++	return linux_path;
++}
++#endif
+ static unsigned int inherited_nofile[2];
+ static bool have_inherited_nofile = false;
+ 
+@@ -192,6 +366,11 @@ int main(int argc, char** argv, char** envp)
+ 	size_t orig_argv0_len = 0;
+ 	const char* orig_argv1 = NULL;
+ 
++	// x86Sim: no transparent huge pages for Darling processes (inherited across fork/exec; arm64 guests already set
++	// it in libarm64jit's host.cpp). With the host's THP "always", the x86_64 daemons' sparse malloc/libdispatch
++	// regions were backed by 2 MB pages: iokitd ~66 of its ~70 MB PSS was AnonHugePages for a few KB actually used.
++	prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
++
+ 	mldr_load_results.kernfd = -1;
+ 	mldr_load_results.argc = argc;
+ 	mldr_load_results.argv = argv;
+@@ -201,6 +380,10 @@ int main(int argc, char** argv, char** envp)
+ 	}
+ 	mldr_load_results.envp = envp;
+ 
++#ifdef __x86_64__
++	reserve_sim_shared_region(argv, envp);
++#endif
++
+ 	// sys_execve() passes the original file path appended to the mldr path in argv[0].
+ 	if (argc > 0)
+ 		p = strchr(argv[0], '!');
+@@ -236,6 +419,10 @@ int main(int argc, char** argv, char** envp)
+ 	process_special_env(&mldr_load_results);
+ 
+ 	exec_path = filename;
++#ifdef __x86_64__
++	arm64_reexec(filename, argv, envp, &mldr_load_results);
++	const char* arm64_exe = arm64_host_setup(&mldr_load_results);
++#endif
+ 
+ #ifdef __i386__
+ 	load(filename, CPU_TYPE_X86, false, argv, &mldr_load_results); // accept i386 only
+@@ -347,6 +534,10 @@ int main(int argc, char** argv, char** envp)
+ 		exit(1);
+ 	}
+ 
++#ifdef __x86_64__
++	if (arm64_exe != NULL)
++		filename = (char*) arm64_exe;
++#endif
+ 	if (dserver_rpc_set_executable_path(filename, strlen(filename)) < 0) {
+ 		fprintf(stderr, "Failed to tell darlingserver about our executable path\n");
+ 		exit(1);
+diff --git a/src/startup/mldr/socket_bitmap.c b/src/startup/mldr/socket_bitmap.c
+index aead923b..3a20a9a5 100644
+--- a/src/startup/mldr/socket_bitmap.c
++++ b/src/startup/mldr/socket_bitmap.c
+@@ -1,7 +1,7 @@
+ /*
+ This file is part of Darling.
+ 
+-Copyright (C) 2017 Lubos Dolezel
++Copyright (C) 2026 Lubos Dolezel
+ 
+ Darling is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+@@ -43,27 +43,32 @@ int socket_bitmap_get(socket_bitmap_t* bitmap) {
+ 			limit.rlim_cur = 1024;
+ 		}
+ 
++		// x86Sim (2026-11-13): the whole bitmap at once (one bit per descriptor; calloc'd pages stay untouched
++		// until used) and never reallocated or freed after: a fork's child closes the parent's descriptors through
++		// socket_bitmap_put (guard_table_postfork_child) and the realloc that shrank the bitmap waited forever for a
++		// glibc malloc arena lock another thread of the parent held at the fork (launchd_sim's spawn children hung:
++		// a boot stuck black, every process idle; the raw fork syscall runs none of glibc's fork handling).
++		// x86Sim (Idle 1): from at most 16384 down (Darwin's OPEN_MAX is 10240). The kernel sizes a process's
++		// descriptor table to its highest descriptor, and with the slots at the top of the host's 524288 limit every
++		// process had a 4 MB table (8 bytes a slot, vmalloc, charged to the device's cgroup: ~190 MB on an idle
++		// iPhone, invisible in PSS). A guest that opens more than that still gets its descriptors (a slot in use is
++		// never handed out or replaced).
++		if (limit.rlim_cur > 16384)
++			limit.rlim_cur = 16384;
+ 		bitmap->highest = limit.rlim_cur - 1;
+ 	}
++	if (!bitmap->bits) {
++		bitmap->bits = calloc(((size_t)bitmap->highest + 1 + 7) / 8, 1);
++		if (!bitmap->bits) {
++			goto out;
++		}
++	}
+ 
+ 	if (bitmap->next_index >= bitmap->bit_length) {
+-		// we need to grow the bitmap
+-
+-		if ((bitmap->bit_length % 8) == 0) {
+-			// we need to allocate an additional byte
+-
+-			void* ptr = realloc(bitmap->bits, (bitmap->bit_length / 8) + 1);
+-			if (!ptr) {
+-				goto out;
+-			}
+-
+-			bitmap->bits = ptr;
+-
+-			bitmap->bits[bitmap->bit_length / 8] = 0;
+-		} else {
+-			// we just need to increment the bit length
++		// grow the bitmap (within its allocation)
++		if (bitmap->bit_length > (size_t)bitmap->highest) {
++			goto out; // every descriptor number is in use
+ 		}
+-
+ 		++bitmap->bit_length;
+ 	}
+ 
+@@ -147,20 +152,9 @@ void socket_bitmap_put(socket_bitmap_t* bitmap, int socket) {
+ 			--bitmap->bit_length;
+ 		}
+ 
+-		new_byte_size = (bitmap->bit_length + 7) / 8;
+-
+-		if (new_byte_size == 0) {
+-			free(bitmap->bits);
+-			bitmap->bits = NULL;
+-		} else if (old_byte_size != new_byte_size) {
+-			// we can free one or more bytes from the bitmap
+-			void* ptr = realloc(bitmap->bits, new_byte_size);
+-			if (!ptr) {
+-				goto out;
+-			}
+-
+-			bitmap->bits = ptr;
+-		}
++		// x86Sim: the allocation stays (see socket_bitmap_get)
++		(void)old_byte_size;
++		(void)new_byte_size;
+ 	}
+ 
+ out:
+@@ -199,7 +193,7 @@ int socket_bitmap_place(socket_bitmap_t* bitmap, int fd) {
+ };
+ 
+ void socket_bitmap_fork_prepare(socket_bitmap_t* bitmap) {
+-	// Serialize with realloc and bitmap updates before taking the fork snapshot.
++	// Serialize with bitmap updates before taking the fork snapshot.
+ 	pthread_mutex_lock(&bitmap->mutex);
+ }
+ 
+@@ -208,6 +202,8 @@ void socket_bitmap_fork_parent(socket_bitmap_t* bitmap) {
+ }
+ 
+ void socket_bitmap_fork_child(socket_bitmap_t* bitmap) {
+-	// The forking thread owns the inherited lock; do not reinitialize live state.
+-	pthread_mutex_unlock(&bitmap->mutex);
++	// x86Sim: a fresh mutex rather than an unlock. This also runs as elfcalls' postfork_child after the raw fork
++	// syscall (sys_fork), where no prepare step took the lock and another thread of the parent may have held it.
++	// The bitmap itself is never reallocated (see socket_bitmap_get), so there is no allocator state to repair.
++	pthread_mutex_init(&bitmap->mutex, NULL);
+ }
+diff --git a/src/startup/mldr/stack.c b/src/startup/mldr/stack.c
+index e100c681..8892e0e1 100644
+--- a/src/startup/mldr/stack.c
++++ b/src/startup/mldr/stack.c
+@@ -1,3 +1,4 @@
++#include <sys/random.h>
+ /*
+  * This file is part of Darling.
+  * Copyright (C) 2021 Darling developers
+@@ -42,6 +43,9 @@
+ #define __user
+ 
+ #define EXECUTABLE_PATH "executable_path="
++// stack_guard, malloc_entropy, executable_cdhash, executable_boothash (see setup_stack)
++#define MLDR_EXEC_KEYS 4
++#define MLDR_EXEC_KEY_SIZE 64
+ 
+ #define __put_user(value, pointer) ({ \
+ 		__typeof__(value) _tmpval = (value); \
+@@ -65,14 +69,14 @@ void elfcalls_make(struct elf_calls* calls);
+ // C library has no registered rseq area. dyld uses it for the CPU number reads
+ // of a macOS shared cache.
+ #define MLDR_RSEQ_CPU_KEY "darling_rseq_cpu_offset="
+-#define MLDR_APPLEP_COUNT 7
++#define MLDR_APPLEP_COUNT 11
+ #define MLDR_TSD_SLOT_SIZE (sizeof(MLDR_TSD_SLOT_KEY) + 2 * sizeof(unsigned long))
+ #define MLDR_ELFCALLS_SIZE_SIZE (sizeof(MLDR_ELFCALLS_SIZE_KEY) + 2 * sizeof(size_t))
+ #define MLDR_RSEQ_CPU_SIZE (sizeof(MLDR_RSEQ_CPU_KEY) + 2 * sizeof(unsigned long))
+ uintptr_t __darling_arm64_tsd_slot_offset(void);
+ bool __darling_arm64_rseq_cpu_offset(intptr_t* offset);
+ #else
+-#define MLDR_APPLEP_COUNT 4
++#define MLDR_APPLEP_COUNT 8
+ #define MLDR_TSD_SLOT_SIZE 0
+ #define MLDR_ELFCALLS_SIZE_SIZE 0
+ #define MLDR_RSEQ_CPU_SIZE 0
+@@ -106,11 +110,30 @@ void FUNCTION_NAME(const char* filepath, struct load_results* lr)
+ 	intptr_t rseq_cpu_offset = 0;
+ #endif
+ 	char __user* applep_contents[MLDR_APPLEP_COUNT];
++	// XNU's per-exec keys (kern_exec.c exec_add_apple_strings): random here, as XNU's are per boot or per exec
++	char exec_keys[MLDR_EXEC_KEYS][MLDR_EXEC_KEY_SIZE];
++	char __user* exec_keys_user[MLDR_EXEC_KEYS];
+ 
+ #define user_long_count(_val) (((_val) + (sizeof(user_long_t) - 1)) / sizeof(user_long_t))
+ 
+ 	elfcalls_make(&_elfcalls);
+ 
++	{
++		uint64_t r[2 + 2 + 5 + 5];
++		if (getrandom(r, sizeof(r), 0) != sizeof(r))
++			memset(r, 0, sizeof(r));
++		// stack_guard must hold a zero byte (it stops string overflows), as XNU's
++		snprintf(exec_keys[0], MLDR_EXEC_KEY_SIZE, "stack_guard=0x%llx", (unsigned long long)(r[0] & ~0xffULL));
++		snprintf(exec_keys[1], MLDR_EXEC_KEY_SIZE, "malloc_entropy=0x%llx,0x%llx", (unsigned long long)r[2], (unsigned long long)r[3]);
++		// 20 bytes in hex (SHA-1's length), as XNU writes both
++		const unsigned char* cd = (const unsigned char*)&r[4];
++		const unsigned char* boot = (const unsigned char*)&r[9];
++		char* q = exec_keys[2] + snprintf(exec_keys[2], MLDR_EXEC_KEY_SIZE, "executable_cdhash=");
++		for (int i = 0; i < 20; i++) q += snprintf(q, 3, "%02x", cd[i]);
++		q = exec_keys[3] + snprintf(exec_keys[3], MLDR_EXEC_KEY_SIZE, "executable_boothash=");
++		for (int i = 0; i < 20; i++) q += snprintf(q, 3, "%02x", boot[i]);
++	}
++
+ 	// Produce executable_path=... for applep
+ 	executable_buf[sizeof(executable_buf) - 1] = '\0';
+ 	strncpy(executable_buf, filepath, 4096);
+@@ -153,7 +176,7 @@ void FUNCTION_NAME(const char* filepath, struct load_results* lr)
+ 	// `envc`-count pointers for env vars (+1 for NULL)
+ 	// `sizeof(applep_contents) / sizeof(*applep_contents)`-count pointers for applep arguments (already includes NULL)
+ 	// space for exepath, kernfd, and elfcalls
+-	sp -= 1 + 1 + (lr->argc + 1) + (lr->envc + 1) + (sizeof(applep_contents) / sizeof(*applep_contents)) + user_long_count(exepath_len + sizeof(EXECUTABLE_PATH) + sizeof(kernfd) + sizeof(elfcalls) + MLDR_TSD_SLOT_SIZE + MLDR_ELFCALLS_SIZE_SIZE + MLDR_RSEQ_CPU_SIZE);
++	sp -= 1 + 1 + (lr->argc + 1) + (lr->envc + 1) + (sizeof(applep_contents) / sizeof(*applep_contents)) + user_long_count(exepath_len + sizeof(EXECUTABLE_PATH) + sizeof(kernfd) + sizeof(elfcalls) + MLDR_TSD_SLOT_SIZE + MLDR_ELFCALLS_SIZE_SIZE + MLDR_RSEQ_CPU_SIZE + MLDR_EXEC_KEYS * MLDR_EXEC_KEY_SIZE);
+ 
+ 	exepath_user = (char __user*) lr->stack_top - exepath_len - sizeof(EXECUTABLE_PATH);
+ 	memcpy(exepath_user, EXECUTABLE_PATH, sizeof(EXECUTABLE_PATH)-1);
+@@ -191,16 +214,34 @@ void FUNCTION_NAME(const char* filepath, struct load_results* lr)
+ 	}
+ #endif
+ 
++	{
++#if defined(__aarch64__)
++		char __user* bottom = elfcalls_size_user - MLDR_RSEQ_CPU_SIZE;
++#else
++		char __user* bottom = elfcalls_user;
++#endif
++		for (int i = 0; i < MLDR_EXEC_KEYS; i++) {
++			bottom -= MLDR_EXEC_KEY_SIZE;
++			exec_keys_user[i] = bottom;
++			memcpy(bottom, exec_keys[i], MLDR_EXEC_KEY_SIZE);
++		}
++	}
++
+ 	applep_contents[0] = exepath_user;
+ 	applep_contents[1] = kernfd_user;
+ 	applep_contents[2] = elfcalls_user;
+ #if defined(__aarch64__)
+ 	applep_contents[3] = tsd_slot_user;
+ 	applep_contents[4] = elfcalls_size_user;
+-	applep_contents[5] = rseq_cpu_user;
+-	applep_contents[6] = NULL;
++	for (int i = 0; i < MLDR_EXEC_KEYS; i++)
++		applep_contents[5 + i] = exec_keys_user[i];
++	// last: rseq_cpu_user may be NULL, which ends the list
++	applep_contents[5 + MLDR_EXEC_KEYS] = rseq_cpu_user;
++	applep_contents[6 + MLDR_EXEC_KEYS] = NULL;
+ #else
+-	applep_contents[3] = NULL;
++	for (int i = 0; i < MLDR_EXEC_KEYS; i++)
++		applep_contents[3 + i] = exec_keys_user[i];
++	applep_contents[3 + MLDR_EXEC_KEYS] = NULL;
+ #endif
+ 
+ 	lr->stack_top = (unsigned long) sp;
+diff --git a/tests/launcher/ids.c b/tests/launcher/ids.c
+index d32e4e1b..6c34e80e 100644
+--- a/tests/launcher/ids.c
++++ b/tests/launcher/ids.c
+@@ -335,6 +335,18 @@ static void test_drop_privileges(void)
+ 		CHECK(!launcherDropPrivileges(&ids));
+ 	}
+ 
++	// In an unprivileged user namespace (unshare -r) setgroups() is denied for
++	// good, but there the list is still the user's: it is left alone.
++	fullyRoot();
++	k.ngroups = ids.ngroups;
++	memcpy(k.groups, ids.groups, ids.ngroups * sizeof(gid_t));
++	resetCalls();
++	g_failCall = "setgroups";
++	CHECK(launcherDropPrivileges(&ids));
++	CHECK(calledAt("setgroups") < 0);
++	CHECK(uidsAre(USER_UID, USER_UID, USER_UID));
++	g_failCall = NULL;
++
+ 	// Dropping only the effective uid (as seteuid() would) leaves the saved uid 0.
+ 	fullyRoot();
+ 	g_ignoreCall = "setresuid";
+diff --git a/tests/mldr/socket_bitmap.c b/tests/mldr/socket_bitmap.c
+index 2f236d58..eb39ed75 100644
+--- a/tests/mldr/socket_bitmap.c
++++ b/tests/mldr/socket_bitmap.c
+@@ -153,7 +153,8 @@ int main(void)
+ 	for (int i = 0; i < LONG_LIVED; i++)
+ 		put(keepers[i]);
+ 
+-	if (bitmap.bit_length != 0 || bitmap.bits != NULL)
++	// x86Sim: the allocation stays once made (no realloc / free after the first get: fork-safe)
++	if (bitmap.bit_length != 0)
+ 	{
+ 		printf("FAIL: %zu entries left after freeing everything\n", bitmap.bit_length);
+ 		return 1;

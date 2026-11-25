@@ -1,0 +1,2656 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index fed4546..431cc11 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -126,6 +126,14 @@ endif (DARLING)
+ if(STATIC_KQUEUE)
+ 	add_darling_object_library(kqueue ${SRC} ${INCL})
+ 	make_fat(kqueue)
++
++	# x86Sim: standalone libkqueue for processes on a foreign libSystem (iOS simulator),
++	# injected with DYLD_INSERT_LIBRARIES and looked up by libsystem_kernel
++	set(DYLIB_INSTALL_NAME "/usr/lib/darling/libkqueue_sim.dylib")
++	add_darling_library(kqueue_sim $<TARGET_OBJECTS:kqueue>) # objects include src/darling/sim_exports.c
++	target_link_libraries(kqueue_sim PRIVATE system)
++	make_fat(kqueue_sim)
++	install(TARGETS kqueue_sim DESTINATION libexec/darling/usr/lib/darling)
+ else()
+     add_library(kqueue SHARED ${SRC} ${INCL})
+ endif()
+diff --git a/src/common/debug.h b/src/common/debug.h
+index 7aaeba6..96ed35e 100644
+--- a/src/common/debug.h
++++ b/src/common/debug.h
+@@ -29,8 +29,14 @@ extern int DEBUG_KQUEUE;
+ extern char *KQUEUE_DEBUG_IDENT;
+ 
+ #if defined(DARLING)
+-extern int __thread_selfid();
+-# define THREAD_ID (__thread_selfid())
++/*
++ * darlingserver identifies threads by Linux tid (it signals that thread for S2C
++ * calls). Ask Darling's libsystem_kernel directly: in iOS simulator processes
++ * __thread_selfid() binds to the runtime's libSystem and returns another thread's
++ * id, which deadlocked kqchan reads (x86Sim).
++ */
++extern long sys_thread_selfid(void);
++# define THREAD_ID ((int) sys_thread_selfid())
+ #elif defined(__linux__)
+ # include <sys/syscall.h>
+ # define THREAD_ID ((pid_t)  syscall(__NR_gettid))
+diff --git a/src/common/filter.c b/src/common/filter.c
+index 8108b73..d08b14e 100644
+--- a/src/common/filter.c
++++ b/src/common/filter.c
+@@ -33,6 +33,7 @@ extern const struct filter evfilt_user;
+ extern const struct filter evfilt_machport;
+ extern const struct filter evfilt_fs;
+ extern const struct filter evfilt_memorystatus;
++extern const struct filter evfilt_sock;
+ 
+ static int
+ filter_register(struct kqueue *kq, short filter, const struct filter *src)
+@@ -108,6 +109,7 @@ filter_register_all(struct kqueue *kq)
+     rv += filter_register(kq, EVFILT_MACHPORT, &evfilt_machport);
+     rv += filter_register(kq, EVFILT_FS, &evfilt_fs);
+     rv += filter_register(kq, EVFILT_MEMORYSTATUS, &evfilt_memorystatus);
++    rv += filter_register(kq, EVFILT_SOCK, &evfilt_sock);
+     kq->kq_nfds++;
+     if (rv != 0) {
+         filter_unregister_all(kq);
+diff --git a/src/common/kevent.c b/src/common/kevent.c
+index 27366e1..3205ce6 100644
+--- a/src/common/kevent.c
++++ b/src/common/kevent.c
+@@ -27,8 +27,32 @@
+ #include <string.h>
+ #include <time.h>
+ 
++#include <sys/stat.h>
++#include <unistd.h>
+ #include "private.h"
+ 
++/* now, in nanoseconds of the monotonic clock */
++static uint64_t
++now_ns(void)
++{
++    struct timespec now;
++
++    clock_gettime(CLOCK_MONOTONIC, &now);
++    return ((uint64_t) now.tv_sec * 1000000000ull + now.tv_nsec);
++}
++
++/* when a wait of timeout from now ends: UINT64_MAX if not within the clock's range */
++static uint64_t
++deadline_ns(const struct timespec *timeout)
++{
++    uint64_t now = now_ns();
++    uint64_t sec = timeout->tv_sec, nsec = timeout->tv_nsec;
++
++    if (sec > (UINT64_MAX - now - nsec) / 1000000000ull)
++        return (UINT64_MAX);
++    return (now + sec * 1000000000ull + nsec);
++}
++
+ static const char *
+ kevent_filter_dump(const struct kevent64_s *kev)
+ {
+@@ -130,6 +154,31 @@ kevent_copyin_one(struct kqueue *kq, const struct kevent64_s *src)
+ 
+     kn = knote_lookup(filt, src);
+     dbg_printf("knote_lookup: ident %d == %p", (int)src->ident, kn);
++#ifdef DARLING
++    /*
++     * x86Sim (Speed 27): a knote watches a duplicate of the program's descriptor (kn_dupfd). XNU drops a file's knotes
++     * when the file is closed; if one survived here (a close libkqueue didn't see, or one deferred), the next file
++     * given the same number found it on EV_ADD and inherited the old file: a new TCP socket's EVFILT_READ reported
++     * the closed mDNSResponder socket's EOF, and Network.framework failed the connection "Network is down". An EV_ADD
++     * whose descriptor is no longer the knote's file replaces the knote.
++     */
++    if (kn != NULL && (src->flags & EV_ADD) && (src->filter == EVFILT_READ || src->filter == EVFILT_WRITE
++            || src->filter == EVFILT_SOCK) && kn->kdata.kn_dupfd >= 0) {
++        struct stat a, b;
++        if (fstat((int) src->ident, &a) == 0 && fstat(kn->kdata.kn_dupfd, &b) == 0
++                && (a.st_dev != b.st_dev || a.st_ino != b.st_ino)) {
++            static int told;
++            if (!told++) {
++                char m[160];
++                int n = snprintf(m, sizeof(m), "libkqueue: stale knote replaced (fd %d filter %d flags 0x%x)\n",
++                    (int) src->ident, src->filter, kn->kev.flags);
++                (void) !write(2, m, n);
++            }
++            knote_delete(filt, kn);
++            kn = NULL;
++        }
++    }
++#endif
+     if (kn == NULL) {
+         if (src->flags & EV_ADD) {
+             if ((kn = knote_new()) == NULL) {
+@@ -148,9 +197,11 @@ kevent_copyin_one(struct kqueue *kq, const struct kevent64_s *src)
+             // but at the moment it just confuses clients
+             kn->kev.flags &= ~EV_VANISHED;
+ 
+-            if (filt->kn_create(filt, kn) < 0) {
++            // a filter can name the error, as -errno; any other failure is EBADF
++            int created = filt->kn_create(filt, kn);
++            if (created < 0) {
+                 knote_release(kn);
+-                errno = EBADF;
++                errno = created < -1 ? -created : EBADF;
+                 return (-1);
+             } 
+             knote_insert(filt, kn);
+@@ -172,16 +223,17 @@ kevent_copyin_one(struct kqueue *kq, const struct kevent64_s *src)
+     }
+ 
+     /*
+-     * EV_DELETE together with EV_DISPATCH2 on a disabled EV_DISPATCH2
+-     * knote (typically one that has just been delivered) defers the
+-     * deletion until the knote is enabled again, and reports EINPROGRESS
+-     * (see EV_DISPATCH2 in <sys/event.h>). The owner of the udata may only
+-     * reclaim it once the deletion has completed.
++     * x86Sim: XNU's defer-delete (kevent_register): EV_DELETE without EV_ENABLE on a
++     * disabled EV_DISPATCH2 knote, i.e. one whose event has been delivered and may not
++     * have been processed yet, fails with EINPROGRESS. libdispatch then keeps the unote
++     * until that event is merged and deletes it with EV_DELETE|EV_ENABLE. Deleting at
++     * once let it free the unote (e.g. a mach reply unote when a peer died) while the
++     * event was still queued for a workqueue thread: "API MISUSE: Resurrection of an
++     * object" in _dispatch_kevent_merge, SIGSEGVs on stale unotes (backboardd).
+      */
+-    if ((src->flags & EV_DELETE) && !(src->flags & EV_ENABLE) &&
+-            (src->flags & EV_DISPATCH2) == EV_DISPATCH2 &&
++    if ((src->flags & (EV_DELETE | EV_ENABLE)) == EV_DELETE &&
+             (kn->kev.flags & EV_DISPATCH2) == EV_DISPATCH2 &&
+-            (kn->kev.flags & EV_DISABLE)) {
++            ((kn->kev.flags & EV_DISABLE) || (kn->kn_flags & KNFL_DEFER_DELETE))) {
+         kn->kn_flags |= KNFL_DEFER_DELETE;
+         errno = EINPROGRESS;
+         return (-1);
+@@ -190,40 +242,28 @@ kevent_copyin_one(struct kqueue *kq, const struct kevent64_s *src)
+     if ((src->flags & EV_DELETE) || ((kn->kn_flags & KNFL_DEFER_DELETE) && (src->flags & EV_ENABLE))) {
+         rv = knote_delete(filt, kn);
+         dbg_printf("knote_delete returned %d", rv);
+-        return (rv);
+-    }
+-
+-    int was_disabled = kn->kev.flags & EV_DISABLE;
+-
+-    /* EV_ADD updates an existing registration, including when the caller
+-     * also enables or disables it. In particular, libdispatch rearms timers
+-     * with EV_ADD | EV_ENABLE; enabling the old registration alone leaves
+-     * its previous deadline and user data in place. */
+-    if (src->flags & EV_ADD) {
++    } else if ((src->flags & (EV_ADD | EV_DISABLE)) == EV_ADD && src->filter == EVFILT_TIMER) {
++        /*
++         * x86Sim: EV_ADD on an existing timer re-arms it with the new deadline, as XNU's
++         * filt_timertouch does, also when EV_ENABLE comes with it. libdispatch keeps one timer
++         * knote per clock/QoS bucket and moves its deadline with EV_ADD|EV_ENABLE|EV_ONESHOT;
++         * the EV_ENABLE branch below re-armed it with the old deadline, so a 0.2 s
++         * dispatch_after armed while a 25 s one was pending fired after 25 s (Swift
++         * continuations, Task.sleep, CFRunLoop timers all wait on these).
++         */
+         kn->kev.udata = src->udata;
+         rv = filt->kn_modify(filt, kn, src);
+-        dbg_printf("kn_modify returned %d", rv);
+-        if (rv < 0)
+-            return (rv);
+-        /* Filter updates may copy flags. Preserve the actual registration
+-         * state until the transition below has reached the backend. */
+-        if (was_disabled)
+-            kn->kev.flags |= EV_DISABLE;
+-        else
+-            kn->kev.flags &= ~EV_DISABLE;
+-    }
+-
+-    if (src->flags & EV_DISABLE) {
++        kn->kev.flags &= ~EV_DISABLE;
++        dbg_printf("kn_modify (timer re-arm) returned %d", rv);
++    } else if (src->flags & EV_DISABLE) {
+         kn->kev.flags |= EV_DISABLE;
+-        if (!was_disabled)
+-            rv = filt->kn_disable(filt, kn);
++        rv = filt->kn_disable(filt, kn);
+         dbg_printf("kn_disable returned %d", rv);
+-    } else if (src->flags & (EV_ENABLE | EV_ADD)) {
++    } else if (src->flags & EV_ENABLE) {
+         kn->kev.flags &= ~EV_DISABLE;
+-        if (was_disabled)
+-            rv = filt->kn_enable(filt, kn);
++        rv = filt->kn_enable(filt, kn);
+         dbg_printf("kn_enable returned %d", rv);
+-    } else if (!(src->flags & EV_ADD) && (src->flags == 0 || src->flags & EV_RECEIPT)) {
++    } else if (src->flags & EV_ADD || src->flags == 0 || src->flags & EV_RECEIPT) {
+         kn->kev.udata = src->udata;
+         rv = filt->kn_modify(filt, kn, src);
+         dbg_printf("kn_modify returned %d", rv);
+@@ -261,7 +301,14 @@ err_path:
+         if (nevents > 0) {
+             memcpy(eventlist, src, sizeof(*src));
+             eventlist->data = status;
++#ifdef DARLING
++            /* x86Sim (fileproviderd vnode): XNU's kevent_register keeps the change's flags and adds EV_ERROR.
++               With EV_ERROR alone libdispatch could not tell an EV_ADD/EV_DELETE error from one on a live knote
++               ("kevent vnode monitor") and skipped its EV_DELETE special cases. */
++            eventlist->flags = src->flags | EV_ERROR;
++#else
+             eventlist->flags = EV_ERROR;
++#endif
+             nevents--;
+             eventlist++;
+             nret++;
+@@ -432,18 +479,11 @@ kevent64_impl(int kqfd, const struct kevent64_s *changelist, int nchanges,
+         nevents = MAX_KEVENT;
+     if ((flags & KEVENT_FLAG_ERROR_EVENTS) == 0 && nevents > 0) {
+         const struct timespec* ts = (flags & KEVENT_FLAG_IMMEDIATE) ? (&timeout_zero) : timeout;
+-        struct timespec deadline, remaining;
+-
+-        /* a wakeup whose events are all dropped must not end a timed wait early */
+-        if (ts != NULL && (ts->tv_sec != 0 || ts->tv_nsec != 0)) {
+-            clock_gettime(CLOCK_MONOTONIC, &deadline);
+-            deadline.tv_sec += ts->tv_sec;
+-            deadline.tv_nsec += ts->tv_nsec;
+-            if (deadline.tv_nsec >= 1000000000) {
+-                deadline.tv_sec++;
+-                deadline.tv_nsec -= 1000000000;
+-            }
+-        }
++        struct timespec left;
++        uint64_t deadline = 0;
++
++        if (ts != NULL && (ts->tv_sec > 0 || ts->tv_nsec > 0))
++            deadline = deadline_ns(ts);
+ again:
+         /*
+          * The events returned by kevent_wait() point at knotes. Another
+@@ -474,21 +514,18 @@ again:
+         kqueue_unlock(kq);
+ 
+         if (rv == 0) {
+-            /* Timeout reached */
+-            /* Avoid returning 0 when waiting indefinitely in case of spurious wakeups */
++            /*
++             * Timeout reached, or every event was dropped (a filter found nothing to report): XNU's kevent()
++             * returns 0 only when the timeout expires, so wait for what's left of it
++             */
+             if (ts == NULL)
+                 goto again;
+-            if (ts->tv_sec != 0 || ts->tv_nsec != 0) {
+-                struct timespec now;
+-                clock_gettime(CLOCK_MONOTONIC, &now);
+-                remaining.tv_sec = deadline.tv_sec - now.tv_sec;
+-                remaining.tv_nsec = deadline.tv_nsec - now.tv_nsec;
+-                if (remaining.tv_nsec < 0) {
+-                    remaining.tv_sec--;
+-                    remaining.tv_nsec += 1000000000;
+-                }
+-                if (remaining.tv_sec > 0 || (remaining.tv_sec == 0 && remaining.tv_nsec > 0)) {
+-                    ts = &remaining;
++            if (deadline != 0 && ret == 0) {
++                uint64_t now = now_ns();
++                if (now < deadline) {
++                    left.tv_sec = (deadline - now) / 1000000000ull;
++                    left.tv_nsec = (deadline - now) % 1000000000ull;
++                    ts = &left;
+                     goto again;
+                 }
+             }
+diff --git a/src/common/knote.c b/src/common/knote.c
+index 2b51d6f..1044ab8 100644
+--- a/src/common/knote.c
++++ b/src/common/knote.c
+@@ -31,17 +31,28 @@ knote_init(void)
+ }
+ 
+ /*
+- * EV_UDATA_SPECIFIC asks for a separate registration per udata value.
+- * This is supported for EVFILT_READ and EVFILT_WRITE, where every knote
+- * already owns its own duplicate of the descriptor in epoll, and for
+- * EVFILT_MEMORYSTATUS, whose knotes own nothing.
++ * EV_UDATA_SPECIFIC asks for a separate registration per udata value (XNU keys
++ * such a knote by ident, filter and udata). Every filter here keeps its state
++ * per knote (its own descriptor duplicate, eventfd, signalfd, timerfd or
++ * darlingserver kqchan; linux/vnode.c shares only the inotify watch), so two
++ * registrations of one ident can live side by side.
++ *
++ * x86Sim: this used to cover EVFILT_READ and EVFILT_WRITE only. libdispatch
++ * registers its proc, signal, vnode, mach receive, socket, memory-pressure and
++ * vfs sources EV_UDATA_SPECIFIC (DISPATCH_EV_DIRECT), and two sources on one
++ * target in a process were one knote: the later sources' EV_ADD only modified
++ * the first registration (its udata kept), so only the first source ever
++ * fired, and cancelling any of them deleted the knote of all. An app never saw
++ * a simulated memory warning (every memory-pressure source is a vnode source
++ * on the process's one $SIMULATOR_MEMORY_WARNINGS descriptor, and libmalloc,
++ * UIKit, CoreAnimation, ... each have one); two DISPATCH_SOURCE_TYPE_PROC
++ * sources on a child, two signal sources on one signal or two mach receive
++ * sources on one port fired only the first (Apple's simulator fires both).
+  */
+ static int
+ knote_udata_specific(const struct knote *kn)
+ {
+-    return ((kn->kev.filter == EVFILT_READ || kn->kev.filter == EVFILT_WRITE
+-            || kn->kev.filter == EVFILT_MEMORYSTATUS)
+-            && (kn->kev.flags & EV_UDATA_SPECIFIC));
++    return ((kn->kev.flags & EV_UDATA_SPECIFIC) != 0);
+ }
+ 
+ static int
+@@ -171,11 +182,7 @@ knote_free_all_atfork(struct filter *filt)
+                 kn->kdata.kn_dupfd = -1;
+             }
+         }
+-        if (filt->kf_id == EVFILT_SIGNAL && kn->kn_sigeventfd >= 0) {
+-            /* The descriptor that counts signals is a second helper of the knote. */
+-            (void) __close_for_kqueue(kn->kn_sigeventfd);
+-            kn->kn_sigeventfd = -1;
+-        }
++        free(kn->kn_extra_buffer); /* x86Sim: EVFILT_MACHPORT's receive buffer */
+         free(kn);
+     }
+     pthread_rwlock_init(&filt->kf_knote_mtx, NULL);
+@@ -202,6 +209,24 @@ knote_lookup(struct filter *filt, const struct kevent64_s *kev)
+     return (ent);
+ }
+ 
++/* Calls fn on every registration of ident in this filter, whatever its udata (fn may not delete it) */
++void
++knote_foreach_ident(struct filter *filt, uintptr_t ident, void (*fn)(struct knote *))
++{
++    struct knote query;
++    struct knote *kn;
++
++    memset(&query, 0, sizeof(query));
++    query.kev.ident = ident;
++    query.kev.filter = filt->kf_id;
++
++    pthread_rwlock_rdlock(&filt->kf_knote_mtx);
++    for (kn = RB_NFIND(knt, &filt->kf_knote, &query); kn != NULL && kn->kev.ident == ident;
++            kn = RB_NEXT(knt, &filt->kf_knote, kn))
++        fn(kn);
++    pthread_rwlock_unlock(&filt->kf_knote_mtx);
++}
++
+ /* Delete every registration of ident in this filter, whatever its udata */
+ void
+ knote_delete_ident(struct filter *filt, uintptr_t ident)
+diff --git a/src/common/kqueue.c b/src/common/kqueue.c
+index cc7782d..72a204a 100644
+--- a/src/common/kqueue.c
++++ b/src/common/kqueue.c
+@@ -26,6 +26,8 @@
+ 
+ #ifdef DARLING
+ #include "../darling/listenregistry.h"
++// the hooks libsystem_kernel calls (kqueue_close(), kqueue_closed_fd(), kqueue_dup(), kqueue_socket_changed())
++#include <darling/emulation/linux_premigration/ext/for-libkqueue.h>
+ #endif
+ 
+ int DEBUG_KQUEUE = 0;
+@@ -123,6 +125,7 @@ void kqueue_cleanup(struct kqueue* kq)
+     for (next = kq->kq_tofree.lh_first; next != NULL; next = tmp)
+     {
+         tmp = next->kn_entries2free.le_next;
++        free(next->kn_extra_buffer); /* x86Sim: EVFILT_MACHPORT's receive buffer (NULL once a socket knote freed its own) */
+         free(next);
+     }
+     LIST_INIT(&kq->kq_tofree);
+@@ -209,33 +212,24 @@ static void kqueue_close_ref_cb(int kqfd, void* kqptr, void* private) {
+ 	kqueue_addref(kq);
+ };
+ 
+-// this function is too expensive for how often it can be called (which is every time an FD is closed).
+-// if possible, this should be optimized or, better yet, we should just completely refactor libkqueue so that
+-// some of the things this function needs to do are no longer necessary (like walking through every single kqueue).
+-void VISIBLE
+-kqueue_closed_fd(int fd)
++// Calls fn(kq, arg) for every kqueue, each under its lock. kq_mtx is held only while the kqueues are collected (with a
++// reference each), since fn may take other locks. (x86Sim: willi/darling-libkqueue#5)
++//
++// FIXME: this is a terrible solution. another (possible better) solution would be to keep a map that maps FDs
++//        to the kqueues they're in. then, each FD would hold a reference on the kqueues they're in and we can
++//        just access those kqueues without additional locks (only the individual kqueue lock).
++static void
++kqueue_foreach(void (*fn)(struct kqueue *, void *), void *arg)
+ {
+ 	if (kqmap == NULL)
+ 		return;
+ 
+-	// we know it's not a kqueue FD (since kqueue_close() takes care of those),
+-	// but it could be a fd inside a kqueue. Since we're creating duplicates of all fd's,
+-	// we now have to walk through all known kqueues and remove the fd from them.
+-
+ 	struct kqueue_close_context context;
+ 	context.kqs_to_check = context.kqs_to_check_buffer;
+ 	context.buffer_size = sizeof(context.kqs_to_check_buffer) / sizeof(*context.kqs_to_check_buffer);
+ 	context.kq_count = 0;
+ 	context.dynamic_buffer = false;
+ 
+-	// we first have to copy all current kqueues into a buffer so we can check them with the kq_mtx dropped.
+-	// this is necessary because some of the operations we perform should not be performed with the kq_mtx held.
+-    // (e.g. acquiring other locks like the individual kqueue locks)
+-	//
+-	// FIXME: this is a terrible solution. another (possible better) solution would be to keep a map that maps FDs
+-	//        to the kqueues they're in. then, each FD would hold a reference on the kqueues they're in and we can
+-	//        just access those kqueues without additional locks (only the individual kqueue lock).
+-
+ 	pthread_mutex_lock(&kq_mtx);
+ 	map_foreach(kqmap, kqueue_close_ref_cb, &context);
+ 	pthread_mutex_unlock(&kq_mtx);
+@@ -243,14 +237,8 @@ kqueue_closed_fd(int fd)
+ 	for (size_t i = 0; i < context.kq_count; ++i) {
+ 		struct kqueue* kq = context.kqs_to_check[i];
+ 
+-		struct filter* filt;
+-
+ 		kqueue_lock(kq);
+-		// drop every registration of the fd, including udata-specific ones
+-		if (filter_lookup(&filt, kq, EVFILT_READ) == 0)
+-			knote_delete_ident(filt, fd);
+-		if (filter_lookup(&filt, kq, EVFILT_WRITE) == 0)
+-			knote_delete_ident(filt, fd);
++		fn(kq, arg);
+ 		kqueue_unlock(kq);
+ 	}
+ 
+@@ -265,10 +253,105 @@ kqueue_closed_fd(int fd)
+ 	if (context.dynamic_buffer) {
+ 		free(context.kqs_to_check);
+ 	}
++}
++
++static void
++kqueue_closed_fd_cb(struct kqueue *kq, void *arg)
++{
++	struct kevent64_s *ev = arg;
++
++	// we don't care whether these operations succeed or not
++	kevent_copyin_one(kq, &ev[0]);
++	kevent_copyin_one(kq, &ev[1]);
++	kevent_copyin_one(kq, &ev[2]);
++	kevent_copyin_one(kq, &ev[3]);
++
++	// and every other registration of the fd: EV_UDATA_SPECIFIC ones are not found by ident alone (upstream libkqueue)
++	struct filter *filt;
++	if (filter_lookup(&filt, kq, EVFILT_READ) == 0)
++		knote_delete_ident(filt, ev[0].ident);
++	if (filter_lookup(&filt, kq, EVFILT_WRITE) == 0)
++		knote_delete_ident(filt, ev[0].ident);
++	if (filter_lookup(&filt, kq, EVFILT_SOCK) == 0)
++		knote_delete_ident(filt, ev[0].ident);
++	if (filter_lookup(&filt, kq, EVFILT_VNODE) == 0)
++		knote_delete_ident(filt, ev[0].ident);
++}
++
++// this function is too expensive for how often it can be called (which is every time an FD is closed).
++// if possible, this should be optimized or, better yet, we should just completely refactor libkqueue so that
++// some of the things this function needs to do are no longer necessary (like walking through every single kqueue).
++void VISIBLE
++kqueue_closed_fd(int fd)
++{
++	if (kqmap == NULL)
++		return;
++
++	// close() succeeded, which leaves errno alone; the deletions below set it for each kqueue the fd isn't in
++	int saved_errno = errno;
++	struct kevent64_s ev[4];
++
++	// x86Sim (Speed 27): EV_ENABLE with the deletes: XNU's close() drops every knote on the fd (knote_fdclose),
++	// also a disabled EV_DISPATCH one whose event was delivered. Without it the defer-delete rule (kevent.c: a
++	// program's EV_DELETE on such a knote is EINPROGRESS) kept the knote, with its duplicate of the closed file, and
++	// the next file given the same number inherited it on EV_ADD: a new TCP socket's EVFILT_READ fired at once with
++	// the previous one's EOF (an mDNSResponder socket the DNS reply had closed), and Network.framework failed the
++	// connection "Network is down" (NSURLSession -1009, mobileassetd's catalog and asset downloads at boot).
++	memset(ev, 0, sizeof(ev));
++	ev[0].ident = fd;
++	ev[0].flags = EV_DELETE | EV_ENABLE | EV_RECEIPT;
++	ev[0].filter = EVFILT_READ;
++	ev[1].ident = fd;
++	ev[1].flags = EV_DELETE | EV_ENABLE | EV_RECEIPT;
++	ev[1].filter = EVFILT_WRITE;
++	ev[2].ident = fd;
++	ev[2].flags = EV_DELETE | EV_ENABLE | EV_RECEIPT;
++	ev[2].filter = EVFILT_SOCK;
++	// x86Sim (fileproviderd vnode): and EVFILT_VNODE. A vnode knote outlived its descriptor, so the next file given
++	// that number found it on EV_ADD (kn_modify: same fflags, nothing to do) and watched the old file.
++	ev[3].ident = fd;
++	ev[3].flags = EV_DELETE | EV_ENABLE | EV_RECEIPT;
++	ev[3].filter = EVFILT_VNODE;
++
++	// we know it's not a kqueue FD (since kqueue_close() takes care of those),
++	// but it could be a fd inside a kqueue. Since we're creating duplicates of all fd's,
++	// we now have to walk through all known kqueues and remove the fd from them.
++	kqueue_foreach(kqueue_closed_fd_cb, ev);
+ 
+ #ifdef DARLING
+     __darling_kqueue_unregister_listen(fd);
+ #endif
++	// x86Sim: and put it back. Every close() in a process with a kqueue ended with errno = ENOENT, so a
++	// caller that sets errno and then closes a file (libsystem_sim_kernel's _sim_load_entitlements_blob and
++	// csops_audittoken answer a short buffer with ERANGE that way) handed its caller ENOENT: lsd registered every
++	// app and extension without entitlements ("Unable to load entitlements ... (-1) No such file or directory").
++	errno = saved_errno;
++}
++
++static void
++kqueue_socket_changed_cb(struct kqueue *kq, void *arg)
++{
++	struct filter *filt;
++	struct knote *kn;
++
++	// every EVFILT_SOCK knote of the socket, the EV_UDATA_SPECIFIC ones too
++	if (filter_lookup(&filt, kq, EVFILT_SOCK) == 0)
++		knote_foreach_ident(filt, (uintptr_t) *(int *) arg, evfilt_sock_changed);
++}
++
++// Darling's libsystem_kernel calls this after connect() and shutdown() on socket fd, while EVFILT_SOCK knotes exist
++// (for-libkqueue.h): XNU's soevent() wakes the socket's EVFILT_SOCK knotes for those changes, and Linux wakes no one
++// for some of them (a datagram socket connecting, a shutdown of only sending). The knote then looks at the socket
++// again.
++void VISIBLE
++kqueue_socket_changed(int fd)
++{
++	if (kqmap == NULL)
++		return;
++
++	int saved_errno = errno;
++	kqueue_foreach(kqueue_socket_changed_cb, &fd);
++	errno = saved_errno;
+ }
+ 
+ // FIXME: this can race with someone closing the old FD right after it's dup'ed but before we're informed.
+@@ -343,6 +426,29 @@ void VISIBLE kqueue_atfork(void)
+     }
+ }
+ 
++// x86Sim (2026-11-13): first thing in a fork's child (Darling's sys_fork, before it closes the parent's guarded
++// descriptors): the child has none of the parent's kqueues (as on Darwin) and the locks are fresh. close() runs
++// kqueue_closed_fd, which takes kq_mtx and the listen registry's lock; another thread of the parent could hold
++// them at the fork (a dispatch thread in kevent), and the child then waited forever (tests/arm64/forkstress.c, a
++// spawn child at boot). No allocation or free here: the parent's malloc locks may be held as well. The kqueues are
++// only forgotten (their memory stays, unused, until the exec); kqueue_atfork() (Darling's libSystem fork path) then
++// finds nothing to tear down.
++static void _kqueue_child_forget_cb(int kqfd, void* kqptr, void* private)
++{
++	(void) kqptr; (void) private;
++	map_delete(kqmap, kqfd);
++}
++
++void VISIBLE kqueue_atfork_child_reset(void)
++{
++	pthread_mutex_init(&kq_mtx, NULL);
++#ifdef DARLING
++	__darling_kqueue_listenregistry_atfork();
++#endif
++	if (kqmap != NULL)
++		map_foreach(kqmap, _kqueue_child_forget_cb, NULL);
++}
++
+ void kqueue_addref(struct kqueue *kq)
+ {
+ 	atomic_inc(&kq->kq_ref);
+diff --git a/src/common/map.c b/src/common/map.c
+index 9c6a170..37125df 100644
+--- a/src/common/map.c
++++ b/src/common/map.c
+@@ -19,10 +19,22 @@
+ struct map {
+     size_t len;
+     void **data;
+-    size_t count;
+-    int max_idx;
++    /* x86Sim Perf 2: one past the highest index ever made non-empty. kqmap is sized to the fd limit (524288 here)
++     * and kqueue_foreach (every fd close, every socket change) walked all of it: iosurfaced and metalhostd pass
++     * buffers as fds every frame, ~14% of a scroll's samples were this loop. Slots above hi are always empty, so
++     * map_foreach visits the same entries in the same order. Raised before the slot is stored. */
++    size_t hi;
+ };
+ 
++static void
++map_raise_hi(struct map *m, int idx)
++{
++    size_t want = (size_t)idx + 1;
++    size_t cur = __atomic_load_n(&m->hi, __ATOMIC_RELAXED);
++    while (cur < want && !__atomic_compare_exchange_n(&m->hi, &cur, want, 1, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED))
++        ;
++}
++
+ struct map *
+ map_new(size_t len)
+ {
+@@ -49,8 +61,6 @@ map_new(size_t len)
+     }
+     dst->len = len;
+ #endif
+-    dst->count = 0;
+-    dst->max_idx = -1;
+ 
+     return (dst);
+ }
+@@ -75,11 +85,9 @@ map_insert(struct map *m, int idx, void *ptr)
+     if (slowpath(idx < 0 || idx >= (int)m->len))
+            return (-1);
+ 
++    map_raise_hi(m, idx);
+     if (atomic_ptr_cas(&(m->data[idx]), 0, ptr) == NULL) {
+         dbg_printf("inserted %p in location %d", ptr, idx);
+-        m->count++;
+-        if (idx > m->max_idx)
+-            m->max_idx = idx;
+         return (0);
+     } else {
+         dbg_printf("tried to insert a value into a non-empty location %d (value=%p)",
+@@ -97,18 +105,6 @@ map_remove(struct map *m, int idx, void *ptr)
+ 
+     if (atomic_ptr_cas(&(m->data[idx]), ptr, 0) == NULL) {
+         dbg_printf("removed %p from location %d", ptr, idx);
+-        if (m->count > 0)
+-            m->count--;
+-        if (idx == m->max_idx) {
+-            int new_max = -1;
+-            for (int i = idx - 1; i >= 0; i--) {
+-                if (m->data[i] != NULL) {
+-                    new_max = i;
+-                    break;
+-                }
+-            }
+-            m->max_idx = new_max;
+-        }
+         return (0);
+     } else {
+         dbg_printf("removal failed: location %d does not contain value %p", idx, m->data[idx]);
+@@ -124,6 +120,8 @@ map_replace(struct map *m, int idx, void *oldp, void *newp)
+     if (slowpath(idx < 0 || idx >= (int)m->len))
+            return (-1);
+ 
++    if (newp)
++        map_raise_hi(m, idx);
+     tmp = atomic_ptr_cas(&(m->data[idx]), oldp, newp);
+     if (tmp == oldp) {
+         dbg_printf("replaced value %p in location %d with value %p",
+@@ -148,11 +146,11 @@ map_lookup(struct map *m, int idx)
+ void
+ map_foreach(struct map *m, void(*cb)(int, void*, void*), void* private)
+ {
+-    if (m->count == 0 || m->max_idx < 0)
+-        return;
+-
+-    int max = m->max_idx;
+-    for (int i = 0; i <= max && i < (int)m->len; i++) {
++    int i;
++    size_t n = __atomic_load_n(&m->hi, __ATOMIC_SEQ_CST);
++    if (n > m->len)
++        n = m->len;
++    for (i = 0; i < (int)n; i++) {
+         if (m->data[i])
+             cb(i, m->data[i], private);
+     }
+@@ -175,21 +173,6 @@ map_delete(struct map *m, int idx)
+ 
+     m->data[idx] = NULL;
+ 
+-    if (oval != NULL && oval != (void *)-1) {
+-        if (m->count > 0)
+-            m->count--;
+-        if (idx == m->max_idx) {
+-            int new_max = -1;
+-            for (int i = idx - 1; i >= 0; i--) {
+-                if (m->data[i] != NULL) {
+-                    new_max = i;
+-                    break;
+-                }
+-            }
+-            m->max_idx = new_max;
+-        }
+-    }
+-
+     dbg_printf("deleted %p from location %d", oval, idx);
+ 
+     return ((void *) oval);
+diff --git a/src/common/private.h b/src/common/private.h
+index 2cbbb06..93c0871 100644
+--- a/src/common/private.h
++++ b/src/common/private.h
+@@ -77,6 +77,34 @@ struct eventfd {
+ #define KNFL_DEFER_DELETE    (0x04)  /* Defer deletion until re-enabled */
+ #define KNFL_KNOTE_DELETED   (0x10)  /* The knote object is no longer valid */
+ 
++/*
++ * XNU's private socket filter (bsd/sys/event.h, PRIVATE), which the SDK's headers leave out
++ */
++#ifndef EVFILT_SOCK
++#define EVFILT_SOCK             (-13)
++#define NOTE_CONNRESET          0x00000001
++#define NOTE_READCLOSED         0x00000002
++#define NOTE_WRITECLOSED        0x00000004
++#define NOTE_TIMEOUT            0x00000008
++#define NOTE_NOSRCADDR          0x00000010
++#define NOTE_IFDENIED           0x00000020
++#define NOTE_SUSPEND            0x00000040
++#define NOTE_RESUME             0x00000080
++#define NOTE_KEEPALIVE          0x00000100
++#define NOTE_ADAPTIVE_WTIMO     0x00000200
++#define NOTE_ADAPTIVE_RTIMO     0x00000400
++#define NOTE_CONNECTED          0x00000800
++#define NOTE_DISCONNECTED       0x00001000
++#define NOTE_CONNINFO_UPDATED   0x00002000
++#define NOTE_NOTIFY_ACK         0x00004000
++#define EVFILT_SOCK_LEVEL_TRIGGER_MASK \
++        (NOTE_READCLOSED | NOTE_WRITECLOSED | NOTE_SUSPEND | NOTE_RESUME | NOTE_CONNECTED | NOTE_DISCONNECTED)
++#define EVFILT_SOCK_ALL_MASK \
++        (NOTE_CONNRESET | NOTE_READCLOSED | NOTE_WRITECLOSED | NOTE_TIMEOUT | NOTE_NOSRCADDR | NOTE_IFDENIED | \
++        NOTE_SUSPEND | NOTE_RESUME | NOTE_KEEPALIVE | NOTE_ADAPTIVE_WTIMO | NOTE_ADAPTIVE_RTIMO | NOTE_CONNECTED | \
++        NOTE_DISCONNECTED | NOTE_CONNINFO_UPDATED | NOTE_NOTIFY_ACK)
++#endif
++
+ #define EVFILT_DROP 0
+ #define EVFILT_DROP_POSTPROCESS (EVFILT_SYSCOUNT + 1)
+  
+@@ -128,6 +156,10 @@ struct filter {
+ 
+     /* knote operations */
+ 
++    /*
++     * Returns 0, or a negative errno for kevent() to fail the registration with. -1 means EBADF (as when filters
++     * returned -1 on any failure), so a filter can't name EPERM.
++     */
+     int     (*kn_create)(struct filter *, struct knote *);
+     int     (*kn_modify)(struct filter *, struct knote *, 
+                             const struct kevent64_s *);
+@@ -216,17 +248,22 @@ int kevent_copyin_one(struct kqueue *kq, const struct kevent64_s *src);
+  * knote internal API
+  */
+ struct knote * knote_lookup(struct filter *, const struct kevent64_s *);
++
++/* EVFILT_SOCK (src/linux/socket.c): wakes a knote to look at its socket again */
++void evfilt_sock_changed(struct knote *);
+ //DEADWOOD: struct knote * knote_get_by_data(struct filter *filt, intptr_t);
+ struct knote * knote_new(void);
+ #define knote_retain(kn) atomic_inc(&kn->kn_ref)
+ void knote_release(struct knote *);
+ void knote_insert(struct filter *, struct knote *);
+ int  knote_delete(struct filter *, struct knote *);
++/* Deletes every knote of the filter, whose kqueue is being freed */
++void knote_delete_all(struct filter *);
+ void knote_free_all_atfork(struct filter *);
+ void knote_delete_ident(struct filter *, uintptr_t);
++void knote_foreach_ident(struct filter *, uintptr_t, void (*)(struct knote *));
+ int  knote_init(void);
+ int  knote_disable(struct filter *, struct knote *);
+-void knote_delete_all(struct filter *);
+ #define knote_get_filter(knt) &((knt)->kn_kq->kq_filt[(knt)->kev.filter])
+ 
+ int         filter_lookup(struct filter **, struct kqueue *, short);
+diff --git a/src/darling/sim_exports.c b/src/darling/sim_exports.c
+new file mode 100644
+index 0000000..c64d4f9
+--- /dev/null
++++ b/src/darling/sim_exports.c
+@@ -0,0 +1,76 @@
++/*
++ * Entry points for processes running a foreign libSystem (the iOS simulator
++ * runtime's). Darling's libSystem links libkqueue in and overrides weak hooks
++ * in libsystem_kernel; a foreign libSystem does not, so libsystem_kernel looks
++ * these up by name instead. The names differ from the hooks themselves so the
++ * lookup cannot find libsystem_kernel's own weak stubs.
++ */
++
++#include <stdint.h>
++
++struct kevent;
++struct kevent64_s;
++struct timespec;
++
++int kqueue_impl(void);
++int kevent_impl(int kqfd, const struct kevent* changelist, int nchanges,
++	struct kevent* eventlist, int nevents, const struct timespec* timeout);
++int kevent64_impl(int kqfd, const struct kevent64_s* changelist, int nchanges,
++	struct kevent64_s* eventlist, int nevents, unsigned int flags, const struct timespec* timeout);
++int kqueue_close(int kqfd);
++void kqueue_closed_fd(int fd);
++void kqueue_dup(int oldfd, int newfd);
++void __darling_kqueue_register_listen(int fd);
++
++#define EXPORT __attribute__((visibility("default")))
++
++EXPORT int __darling_sim_kqueue_impl(void)
++{
++	return kqueue_impl();
++}
++
++EXPORT int __darling_sim_kevent_impl(int kqfd, const struct kevent* changelist, int nchanges,
++	struct kevent* eventlist, int nevents, const struct timespec* timeout)
++{
++	return kevent_impl(kqfd, changelist, nchanges, eventlist, nevents, timeout);
++}
++
++EXPORT int __darling_sim_kevent64_impl(int kqfd, const struct kevent64_s* changelist, int nchanges,
++	struct kevent64_s* eventlist, int nevents, unsigned int flags, const struct timespec* timeout)
++{
++	return kevent64_impl(kqfd, changelist, nchanges, eventlist, nevents, flags, timeout);
++}
++
++EXPORT int __darling_sim_kqueue_close(int kqfd)
++{
++	return kqueue_close(kqfd);
++}
++
++void kqueue_atfork_child_reset(void);
++// x86Sim: Darling's sys_fork calls it in the child (common/kqueue.c)
++EXPORT void __darling_sim_kqueue_atfork_child(void)
++{
++	kqueue_atfork_child_reset();
++}
++
++EXPORT void __darling_sim_kqueue_closed_fd(int fd)
++{
++	kqueue_closed_fd(fd);
++}
++
++EXPORT void __darling_sim_kqueue_dup(int oldfd, int newfd)
++{
++	kqueue_dup(oldfd, newfd);
++}
++
++EXPORT void __darling_sim_kqueue_register_listen(int fd)
++{
++	__darling_kqueue_register_listen(fd);
++}
++
++// x86Sim: willi/darling-libkqueue#5 (EVFILT_SOCK): libsystem_kernel's connect()/shutdown() hook
++void kqueue_socket_changed(int fd);
++EXPORT void __darling_sim_kqueue_socket_changed(int fd)
++{
++	kqueue_socket_changed(fd);
++}
+diff --git a/src/linux/machport.c b/src/linux/machport.c
+index 9474d58..c6831b2 100644
+--- a/src/linux/machport.c
++++ b/src/linux/machport.c
+@@ -35,6 +35,14 @@
+ 
+ #include "private.h"
+ 
++/*
++ * Messages are received together with the event (MACH_RCV_MSG in fflags) into this
++ * per-knote buffer, like XNU receives into a workqueue thread's stack. It used to be
++ * 64 bytes, so anything bigger came back as MACH_RCV_TOO_LARGE and had to be received
++ * again by the caller (x86Sim). kn_extra_buffer points to it; it is freed with the knote.
++ */
++#define MACHPORT_RECEIVE_BUFFER_SIZE (16 * 1024)
++
+ /*
+  * EVFILT_MACHPORT knotes are backed by a kqueue channel (kqchan) to darlingserver,
+  * which owns the port. The server tells us about events on the channel's socket.
+@@ -289,8 +297,8 @@ mp_send_arm(struct knote *kn)
+     call.header.pid = getpid();
+     call.header.tid = THREAD_ID;
+     call.shared_state = (uint64_t) (uintptr_t) &kn->kn_mp.armed;
+-    call.default_buffer = (uint64_t) (uintptr_t) &kn->kn_extra_buffer[0];
+-    call.default_buffer_size = sizeof(kn->kn_extra_buffer);
++    call.default_buffer = (uint64_t) (uintptr_t) kn->kn_extra_buffer;
++    call.default_buffer_size = MACHPORT_RECEIVE_BUFFER_SIZE;
+ 
+     if (send(kn->kdata.kn_dupfd, &call, sizeof(call), 0) < 0) {
+         dbg_printf("machport: sending arm failed: %d (%s)", errno, strerror(errno));
+@@ -360,8 +368,8 @@ mp_read(struct kevent64_s *dst, struct knote *kn)
+     call.header.number = dserver_kqchan_msgnum_mach_port_read;
+     call.header.pid = getpid();
+     call.header.tid = THREAD_ID;
+-    call.default_buffer = (uint64_t) (uintptr_t) &kn->kn_extra_buffer[0];
+-    call.default_buffer_size = sizeof(kn->kn_extra_buffer);
++    call.default_buffer = (uint64_t) (uintptr_t) kn->kn_extra_buffer;
++    call.default_buffer_size = MACHPORT_RECEIVE_BUFFER_SIZE;
+     if (send(kn->kdata.kn_dupfd, &call, sizeof(call), 0) < 0) {
+         dbg_printf("evfilt_machport_copyout() sending request failed: %d (%s)", errno, strerror(errno));
+         return (-1);
+@@ -495,6 +503,13 @@ evfilt_machport_knote_create(struct filter *filt, struct knote *kn)
+     memset(&kn->kn_mp, 0, sizeof(kn->kn_mp));
+     kn->kn_mp.pending_tail = &kn->kn_mp.pending;
+ 
++    /* x86Sim: the knote's receive buffer is allocated (freed with the knote: an event's message may still be read from it) */
++    if (kn->kn_extra_buffer == NULL) {
++        kn->kn_extra_buffer = malloc(MACHPORT_RECEIVE_BUFFER_SIZE);
++        if (kn->kn_extra_buffer == NULL)
++            return (-1);
++    }
++
+ 	int status = _dserver_rpc_kqchan_mach_port_open_4libkqueue(port, (void*)kn->kev.ext[0], kn->kev.ext[1], kn->kev.fflags, &kn->kdata.kn_dupfd);
+ 	if (status < 0) {
+ 		dbg_printf("evfilt_machport_open: %s", strerror(-status));
+diff --git a/src/linux/platform.c b/src/linux/platform.c
+index 02e1e92..8f9d0d7 100644
+--- a/src/linux/platform.c
++++ b/src/linux/platform.c
+@@ -22,6 +22,7 @@
+ 
+ #ifdef DARLING
+ #include "../darling/listenregistry.h"
++#include <darling/emulation/linux_premigration/ext/for-libkqueue.h>
+ #include <sys/param.h>
+ #endif
+ 
+@@ -238,6 +239,7 @@ linux_kevent_copyout(struct kqueue *kq, int nready,
+     int i, nret, rv;
+     struct kevent64_s* event;
+ 
++    kq->kq_copyout_gen++;
+     nret = nready;
+     for (i = 0; i < nready; i++) {
+         ev = &epevt_get()[i];
+@@ -531,3 +533,19 @@ linux_fd_to_path(char *buf, size_t bufsz, int fd)
+ #endif
+ }
+ 
++
++/*
++ * XNU's filt_soread() and filt_sowrite() report a socket's pending error (so_error) as fflags at end of file, leaving
++ * it pending (libsystem_kernel's view of the socket has it: for-libkqueue.h). Other descriptors have none.
++ */
++uint32_t
++linux_socket_eof_error(struct knote *kn, uint32_t events)
++{
++    if (!(events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)))
++        return (0);
++#ifdef DARLING
++    return (_socket_error_4libkqueue(kn->kdata.kn_dupfd, (events & EPOLLERR) != 0));
++#else
++    return (0);
++#endif
++}
+diff --git a/src/linux/platform.h b/src/linux/platform.h
+index be0f493..a935497 100644
+--- a/src/linux/platform.h
++++ b/src/linux/platform.h
+@@ -93,7 +93,7 @@ struct linux_machport_state {
+ #define KNOTE_PLATFORM_SPECIFIC \
+     int kn_epollfd; /* A copy of filter->epfd */      \
+     union { \
+-        char kn_extra_buffer[64]; /* Extra data buffer used by some filters (EVFILT_MACHPORT) */ \
++        char *kn_extra_buffer; /* EVFILT_MACHPORT: messages received with the event (MACHPORT_RECEIVE_BUFFER_SIZE) */ \
+     }; \
+     union { \
+         int kn_timerfd; \
+@@ -102,7 +102,6 @@ struct linux_machport_state {
+         int kn_eventfd; \
+         int kn_dupfd; \
+     } kdata; \
+-    int kn_sigeventfd; /* EVFILT_SIGNAL: counts signals taken by a handler */ \
+     struct linux_machport_state kn_mp
+ 
+ /*
+@@ -111,6 +110,8 @@ struct linux_machport_state {
+ #define KQUEUE_PLATFORM_SPECIFIC \
+     struct epoll_event kq_plist[MAX_KEVENT]; \
+     size_t kq_nplist; \
++    /* counts linux_kevent_copyout() calls: a knote with two epoll entries reports once per call (socket.c) */ \
++    unsigned int kq_copyout_gen; \
+     LIST_HEAD(, knote) kq_machports; /* EVFILT_MACHPORT knotes, incl. deleted ones with undelivered events */ \
+     int kq_mp_wakefd; /* eventfd in the epoll set; raised when such knotes have events to deliver */ \
+     int kq_mp_wake_raised; \
+@@ -144,6 +145,8 @@ int     linux_eventfd_descriptor(struct eventfd *);
+ 
+ int     linux_get_descriptor_type(struct knote *);
+ int     linux_fd_to_path(char *, size_t, int);
++/* EVFILT_READ's and EVFILT_WRITE's fflags for a socket knote whose epoll events are events (platform.c) */
++uint32_t linux_socket_eof_error(struct knote *, uint32_t events);
+ 
+ /* epoll-related functions */
+ 
+diff --git a/src/linux/read.c b/src/linux/read.c
+index a90efac..bb30238 100644
+--- a/src/linux/read.c
++++ b/src/linux/read.c
+@@ -26,6 +26,7 @@
+ #include <sys/socket.h>
+ #include <sys/types.h>
+ #include <string.h>
++#include <poll.h>
+ #include <unistd.h>
+ 
+ #include <darling/emulation/linux_premigration/ext/for-libkqueue.h>
+@@ -106,6 +107,40 @@ evfilt_read_copyout(struct kevent64_s *dst, struct knote *src, void *ptr)
+     }
+ 
+     dbg_printf("epoll: %s", epoll_event_dump(ev));
++#ifdef DARLING
++    /* x86Sim: Linux reports a stream socket that was never connected as hung up (TCP_CLOSE), so EVFILT_READ fired
++     * with EV_EOF at once. XNU's soreadable() is false for it (not connected, nothing received, no error, receiving
++     * not shut down). Network.framework registers EVFILT_READ before connect() and took that EOF as the flow failing:
++     * every NSURLSession request ended in ENETDOWN (NSURLErrorNotConnectedToInternet). Such an event is dropped. */
++    if ((ev->events & (EPOLLHUP | EPOLLRDHUP)) && !(ev->events & (EPOLLIN | EPOLLERR))
++            && !(src->kn_flags & (KNFL_PASSIVE_SOCKET | KNFL_REGULAR_FILE))) {
++        struct socket_state_4libkqueue st;
++        /* the event may also be stale: epoll_wait() took it before connect() and the connection is up by now
++         * (the socket no longer hangs up): that EOF is dropped too */
++        struct pollfd now = { .fd = src->kdata.kn_dupfd, .events = POLLIN | POLLOUT };
++        int stale = poll(&now, 1, 0) == 1 && !(now.revents & (POLLIN | POLLHUP | POLLERR));
++        /* ... or connect() completed between that poll() and this state (loopback connects at once): connected,
++         * this direction open and no error is not a hang-up either (else EV_EOF reached the program before the
++         * connection's own events: Network.framework failed a TLS flow to 127.0.0.1 or the host's own address with
++         * ENETDOWN, ~1 in 2) */
++        if (_socket_state_4libkqueue(src->kdata.kn_dupfd, &st) == 0
++                && (stale || ((st.state & ~SOSTATE_EVCONNINFO) == 0 && st.error == 0)
++                    || ((st.state & SOSTATE_ISCONNECTED) && !(st.state & (SOSTATE_ISDISCONNECTED | SOSTATE_CANTRCVMORE)) && st.error == 0))) {
++            dst->filter = EVFILT_DROP;
++            /* EV_DISPATCH/EV_ONESHOT (EPOLLONESHOT): epoll disarmed the descriptor for this event, which the program
++             * never sees, so it never re-enables it: arm it again, edge-triggered, so the hang-up doesn't fire again
++             * but the connection's readiness does (the program's EV_ENABLE restores the knote's own events) */
++            if (src->data.events & EPOLLONESHOT) {
++                struct epoll_event rearm;
++                memset(&rearm, 0, sizeof(rearm));
++                rearm.events = src->data.events | EPOLLET;
++                rearm.data.ptr = src;
++                (void) epoll_ctl(src->kn_epollfd, EPOLL_CTL_MOD, src->kdata.kn_dupfd, &rearm);
++            }
++            return (0);
++        }
++    }
++#endif
+     kevent_int_to_64(&src->kev, dst);
+ #if defined(HAVE_EPOLLRDHUP)
+     if (ev->events & EPOLLRDHUP || ev->events & EPOLLHUP)
+@@ -114,8 +149,7 @@ evfilt_read_copyout(struct kevent64_s *dst, struct knote *src, void *ptr)
+     if (ev->events & EPOLLHUP)
+         dst->flags |= EV_EOF;
+ #endif
+-    if (ev->events & EPOLLERR)
+-        dst->fflags = 1; /* FIXME: Return the actual socket error */
++    dst->fflags = linux_socket_eof_error(src, ev->events);
+           
+     if (src->kn_flags & KNFL_PASSIVE_SOCKET) {
+         /* On return, data contains the length of the 
+diff --git a/src/linux/signal.c b/src/linux/signal.c
+index 7fa3281..09822c9 100644
+--- a/src/linux/signal.c
++++ b/src/linux/signal.c
+@@ -14,13 +14,9 @@
+  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+  */
+ 
+-#include <limits.h>
+-
+ #include "private.h"
+-
+-#ifdef DARLING
+-#include <darling/emulation/linux_premigration/ext/for-libkqueue.h>
+-#endif
++#include <fcntl.h>
++#include <sched.h>
+ 
+ #if HAVE_SYS_SIGNALFD_H
+ # include <sys/signalfd.h>
+@@ -49,94 +45,114 @@ struct signalfd_siginfo
+ };
+ #endif
+ 
+-/* Discards the pending signals and returns how many there were. */
+-static int
+-signalfd_reset(int sigfd)
+-{
+-    struct signalfd_siginfo sig;
+-    ssize_t n;
+-    int count = 0;
++/*
++ * Darling: signals are counted by a tap in libsystem_kernel's signal handler
++ * (__darling_sigexc_add_tap), which sees every signal the process receives
++ * whatever its disposition, as XNU's kqueue does. Each knote gets an eventfd
++ * that the tap adds 1 to per signal: data is the real count. The signalfd path
++ * below (block the signal on the registering thread, read it from a signalfd)
++ * missed every process-directed signal Linux delivered to another thread, and
++ * reported 1 for any number; it stays for SIGCHLD (not routed through the
++ * handler) and when there is no tap.
++ */
++extern int __darling_sigexc_add_tap(void (*tap)(int)) __attribute__((weak_import));
++static int signalfd_add(int epfd, int sigfd, void *ptr);
+ 
+-    for (;;) {
+-        n = read(sigfd, &sig, sizeof(sig));
+-        if (n == sizeof(sig)) {
+-            count++;
+-            continue;
++#define SIGTAP_MAX 128
++static struct {
++    volatile int sig;  /* 0: free */
++    volatile int fd;
++} sigtap[SIGTAP_MAX];
++static volatile int sigtap_inflight;
++static volatile int sigtap_ok = -1;
++
++static void
++sigtap_fire(int sig)
++{
++    __sync_fetch_and_add(&sigtap_inflight, 1);
++    for (int i = 0; i < SIGTAP_MAX; i++) {
++        if (sigtap[i].sig == sig) {
++            int fd = sigtap[i].fd;
++            uint64_t one = 1;
++            if (fd >= 0 && write(fd, &one, sizeof(one)) < 0) {}
+         }
+-        if (n < 0 && errno == EINTR)
+-            continue;
+-        if (n < 0 && errno == EWOULDBLOCK)
+-            return (count);
+-        dbg_perror("read(2) from signalfd");
+-        abort();
+     }
++    __sync_fetch_and_sub(&sigtap_inflight, 1);
+ }
+ 
+-#ifdef DARLING
+-/*
+- * A signal filter records every attempt to deliver the signal to the
+- * process, whatever its disposition. The signalfd only sees a signal that
+- * stays pending because every thread blocks it; one that a thread takes
+- * (even to ignore it) is counted on this eventfd instead.
+- */
+ static int
+-sigeventfd_create(int epfd, void *ptr, int signum)
++sigtap_available(void)
+ {
+-    struct epoll_event ev;
+-    int evfd;
+-    int rv;
+-
+-    evfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+-    if (evfd < 0) {
+-        dbg_perror("eventfd(2)");
+-        return (-1);
+-    }
++    if (sigtap_ok < 0)
++        sigtap_ok = (__darling_sigexc_add_tap != NULL && __darling_sigexc_add_tap(sigtap_fire) == 0) ? 1 : 0;
++    return sigtap_ok;
++}
+ 
+-    memset(&ev, 0, sizeof(ev));
+-    ev.events = EPOLLIN;
+-    ev.data.ptr = ptr;
+-    if (epoll_ctl(epfd, EPOLL_CTL_ADD, evfd, &ev) < 0) {
+-        dbg_perror("epoll_ctl(2)");
+-        (void) __close_for_kqueue(evfd);
+-        return (-1);
+-    }
++static int
++sigtap_slot(int fd)
++{
++    for (int i = 0; i < SIGTAP_MAX; i++)
++        if (sigtap[i].sig != 0 && sigtap[i].fd == fd)
++            return i;
++    return -1;
++}
+ 
+-    rv = _signal_watch_4libkqueue(signum, evfd);
+-    if (rv < 0) {
+-        dbg_printf("cannot watch signal %d: %d", signum, rv);
+-        (void) epoll_ctl(epfd, EPOLL_CTL_DEL, evfd, NULL);
+-        (void) __close_for_kqueue(evfd);
+-        return (-1);
++/* an eventfd in the epoll set, counted by the tap; -1 when not possible */
++static int
++sigtap_create(int epfd, void *ptr, int signum)
++{
++    if (signum == 20 /* SIGCHLD */ || !sigtap_available())
++        return -1;
++    int fd = eventfd(0, 0);
++    if (fd < 0)
++        return -1;
++    fcntl(fd, F_SETFD, FD_CLOEXEC);
++    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
++    for (int i = 0; i < SIGTAP_MAX; i++) {
++        if (__sync_bool_compare_and_swap(&sigtap[i].sig, 0, -1)) {  /* claimed, not yet live */
++            sigtap[i].fd = fd;
++            if (signalfd_add(epfd, fd, ptr) < 0) {
++                sigtap[i].fd = -1;
++                sigtap[i].sig = 0;
++                break;
++            }
++            __sync_synchronize();
++            sigtap[i].sig = signum;
++            return fd;
++        }
+     }
+-
+-    return (evfd);
++    (void) __close_for_kqueue(fd);
++    return -1;
+ }
+ 
+ static void
+-sigeventfd_delete(int epfd, int evfd, int signum)
++sigtap_release(int slot)
+ {
+-    _signal_unwatch_4libkqueue(signum, evfd);
+-    if (epfd >= 0)
+-        (void) epoll_ctl(epfd, EPOLL_CTL_DEL, evfd, NULL);
+-    (void) __close_for_kqueue(evfd);
++    sigtap[slot].sig = -1;  /* no new writes */
++    __sync_synchronize();
++    while (sigtap_inflight != 0)
++        sched_yield();      /* a tap on another thread may still hold the fd */
++    sigtap[slot].fd = -1;
++    __sync_synchronize();
++    sigtap[slot].sig = 0;
+ }
+ 
+-/* Returns how many signals were counted since the last call. */
+-static int
+-sigeventfd_reset(int evfd)
++static void
++signalfd_reset(int sigfd)
+ {
+-    uint64_t count;
++    struct signalfd_siginfo sig;
+     ssize_t n;
+ 
+-    do {
+-        n = read(evfd, &count, sizeof(count));
+-    } while (n < 0 && errno == EINTR);
+-
+-    if (n != sizeof(count))
+-        return (0);
+-    return (count > INT_MAX) ? INT_MAX : (int) count;
++    /* Discard any pending signal */
++    n = read(sigfd, &sig, sizeof(sig));
++    if (n < 0 || n != sizeof(sig)) {
++        if (errno == EWOULDBLOCK)
++            return;
++        //FIXME: eintr?
++        dbg_perror("read(2) from signalfd");
++        abort();
++    }
+ }
+-#endif
+ 
+ static int
+ signalfd_add(int epfd, int sigfd, void *ptr)
+@@ -203,22 +219,28 @@ errout:
+ int
+ evfilt_signal_copyout(struct kevent64_s *dst, struct knote *src, void *x UNUSED)
+ {
+-    int count;
++    int sigfd;
+ 
+-    count = signalfd_reset(src->kdata.kn_signalfd);
+-#ifdef DARLING
+-    if (src->kn_sigeventfd >= 0)
+-        count += sigeventfd_reset(src->kn_sigeventfd);
+-#endif
++    sigfd = src->kdata.kn_signalfd;
+ 
+-    kevent_int_to_64(&src->kev, dst);
+-    if (count == 0) {
+-        /* Both descriptors were ready and the other one took the count. */
+-        dst->filter = EVFILT_DROP;
++    if (sigfd >= 0 && sigtap_slot(sigfd) >= 0) {
++        uint64_t n = 0;
++        if (read(sigfd, &n, sizeof(n)) != sizeof(n) || n == 0) {
++            dst->filter = EVFILT_DROP;  /* consumed by another thread's copyout: no event */
++            return (0);
++        }
++        kevent_int_to_64(&src->kev, dst);
++        dst->data = (int64_t) n;
+         return (0);
+     }
+-    /* The number of times the signal occurred since the last report. */
+-    dst->data = count;
++
++    signalfd_reset(sigfd);
++
++    kevent_int_to_64(&src->kev, dst);
++    /* NOTE: dst->data should be the number of times the signal occurred,
++       but that information is not available.
++     */
++    dst->data = 1;  
+ 
+     return (0);
+ }
+@@ -228,20 +250,12 @@ evfilt_signal_knote_create(struct filter *filt, struct knote *kn)
+ {
+     int fd;
+ 
+-    kn->kn_sigeventfd = -1;
+-    fd = signalfd_create(filter_epfd(filt), kn, kn->kev.ident);
++    fd = sigtap_create(filter_epfd(filt), kn, kn->kev.ident);
++    if (fd < 0)
++        fd = signalfd_create(filter_epfd(filt), kn, kn->kev.ident);
+     if (fd > 0) {
+         kn->kev.flags |= EV_CLEAR;
+         kn->kdata.kn_signalfd = fd;
+-#ifdef DARLING
+-        kn->kn_sigeventfd = sigeventfd_create(filter_epfd(filt), kn, kn->kev.ident);
+-        if (kn->kn_sigeventfd < 0) {
+-            (void) epoll_ctl(filter_epfd(filt), EPOLL_CTL_DEL, fd, NULL);
+-            (void) __close_for_kqueue(fd);
+-            kn->kdata.kn_signalfd = -1;
+-            return (-1);
+-        }
+-#endif
+         return (0);
+     } else {
+         kn->kdata.kn_signalfd = -1;
+@@ -268,19 +282,15 @@ evfilt_signal_knote_delete(struct filter *filt, struct knote *kn)
+     if (kn->kdata.kn_signalfd == -1)
+         return (0);
+ 
+-#ifdef DARLING
+-    /* Stop counting first: after a fork, the epoll set below is gone. */
+-    if (kn->kn_sigeventfd >= 0) {
+-        sigeventfd_delete(filter_epfd(filt), kn->kn_sigeventfd, kn->kev.ident);
+-        kn->kn_sigeventfd = -1;
+-    }
+-#endif
+-
+     if (epoll_ctl(filter_epfd(filt), EPOLL_CTL_DEL, sigfd, NULL) < 0) {
+         dbg_perror("epoll_ctl(2)");
+         return (-1);
+     }
+ 
++    int slot = sigtap_slot(sigfd);
++    if (slot >= 0)
++        sigtap_release(slot);
++
+     if (__close_for_kqueue(sigfd) < 0) {
+         dbg_perror("close(2)");
+         return (-1);
+diff --git a/src/linux/socket.c b/src/linux/socket.c
+new file mode 100644
+index 0000000..796cd29
+--- /dev/null
++++ b/src/linux/socket.c
+@@ -0,0 +1,386 @@
++/* x86Sim: ported from willi/darling-libkqueue#5 (research/willi/darling-libkqueue-5.diff); see FINDINGS.md "Spike 3.8" */
++/*
++ * EVFILT_SOCK, XNU's socket event filter (bsd/kern/uipc_socket.c: filt_sockattach, filt_sockev_common,
++ * filt_socktouch, filt_sockprocess). Apple's Network.framework learns from it that a nonblocking connect()
++ * completed (NOTE_CONNECTED), failed or was reset (NOTE_CONNRESET), timed out (NOTE_TIMEOUT) or that a direction was
++ * shut down (NOTE_READCLOSED, NOTE_WRITECLOSED); libdispatch's DISPATCH_SOURCE_TYPE_SOCK registers it.
++ *
++ * XNU raises the filter from the socket's state changes (soevent() hints) and computes what it reports from the
++ * socket's state (so_state) and pending error (so_error). Here, Linux wakes the knote: epoll watches a copy of the
++ * socket, edge-triggered, for the readiness Linux changes when the socket's state does (a connect completing or
++ * failing, a shutdown, a reset, an error). Darling's libsystem_kernel derives XNU's state and error from the Linux
++ * socket (_socket_state_4libkqueue), and the knote turns them into notes as filt_sockev_common does:
++ * - level-triggered notes (NOTE_CONNECTED, NOTE_DISCONNECTED, NOTE_READCLOSED, NOTE_WRITECLOSED, NOTE_RESUME) are
++ *   reported while their state holds, but wake the program only once;
++ * - XNU's TCP's one-shot hints come from the state changes that raise them: libsystem_kernel counts the socket's
++ *   resets (NOTE_CONNRESET) and timeouts (NOTE_TIMEOUT) while a knote watches it, also those the program took before
++ *   the knote looked; connecting or disconnecting updates TCP's connection info (NOTE_CONNINFO_UPDATED);
++ * - a pending error fires the knote with EV_EOF and the error as data, and stays pending for the program's SO_ERROR;
++ * - data is otherwise SOCKEV_CONNECTED / SOCKEV_DISCONNECTED.
++ * Sockets are never suspended (XNU suspends them for interface flow control), so NOTE_RESUME holds.
++ *
++ * An eventfd wakes the knote outside the socket's own events: when attaching or updating it finds something to
++ * report, and after a delivery without EV_CLEAR, which XNU re-evaluates on the next kevent().
++ *
++ * Not reported: NOTE_NOSRCADDR, NOTE_IFDENIED, NOTE_KEEPALIVE, NOTE_ADAPTIVE_WTIMO/RTIMO and NOTE_NOTIFY_ACK, which
++ * come from XNU's own TCP and interface policy.
++ */
++
++#include <errno.h>
++#include <fcntl.h>
++#include <stdint.h>
++#include <string.h>
++#include <stdlib.h>
++#include <unistd.h>
++
++#include <darling/emulation/linux_premigration/ext/for-libkqueue.h>
++
++#include "private.h"
++
++/* XNU's socket event data (bsd/sys/socketvar.h, PRIVATE) */
++#define SOCKEV_CONNECTED        0x00000001
++#define SOCKEV_DISCONNECTED     0x00000002
++
++/* The knote's state, as XNU keeps it in the knote */
++struct sock_knote {
++    uint32_t fflags;    /* XNU's kn_fflags: notes gathered since the last delivery (with EV_CLEAR) */
++    uint32_t delivered; /* XNU's kn_hook32: level-triggered notes already delivered */
++    unsigned state;     /* the socket's state when last looked at, to tell what changed */
++    unsigned resets;    /* the socket's reset and timeout counts then (struct socket_state_4libkqueue) */
++    unsigned timeouts;
++    unsigned gen;       /* the kevent() copyout that last looked at it (KQUEUE_PLATFORM_SPECIFIC) */
++    int efd;            /* wakes the knote outside the socket's events */
++};
++
++/* x86Sim: this tree's knote has a kn_extra_buffer pointer (EVFILT_MACHPORT mallocs it), not an inline buffer: the
++ * state is allocated with the knote (evfilt_sock_knote_create) and freed with it */
++
++static struct sock_knote *
++sock_knote(struct knote *kn)
++{
++    return (struct sock_knote *) kn->kn_extra_buffer;
++}
++
++/*
++ * filt_sockev_common(): whether the knote has something to report. hints: raise the one-shot notes from what
++ * changed since the last look (attaching raises none: XNU's knote didn't see the hints posted before it). With out,
++ * the knote is being delivered: fills it in and remembers what it delivered.
++ */
++static int
++sock_evaluate(struct knote *kn, int hints, struct kevent64_s *out)
++{
++    struct sock_knote *sk = sock_knote(kn);
++    struct socket_state_4libkqueue st;
++    unsigned state;
++    int error;
++    uint32_t level = 0;
++    int64_t data;
++    int ret = 0;
++
++    if (_socket_state_4libkqueue(kn->kdata.kn_dupfd, &st) < 0)
++        return (0);
++    state = st.state;
++    error = st.error;
++
++    /*
++     * XNU's TCP posts these hints (other protocols post none); they're one-shot, so taken from what changed. The
++     * counts only grow: one below the knote's is the socket's, forgotten and remembered again.
++     */
++    hints = hints && (state & SOSTATE_EVCONNINFO);
++    if (st.resets > sk->resets) {
++        if (hints)
++            sk->fflags |= NOTE_CONNRESET;
++        sk->resets = st.resets;
++    }
++    if (st.timeouts > sk->timeouts) {
++        if (hints)
++            sk->fflags |= NOTE_TIMEOUT;
++        sk->timeouts = st.timeouts;
++    }
++    if (hints && (state & ~sk->state & (SOSTATE_ISCONNECTED | SOSTATE_ISDISCONNECTED)))
++        sk->fflags |= NOTE_CONNINFO_UPDATED;
++    sk->state = state;
++
++    if (state & SOSTATE_ISCONNECTED) {
++        sk->fflags |= NOTE_CONNECTED;
++        level |= NOTE_CONNECTED;
++    }
++    if (state & SOSTATE_ISDISCONNECTED) {
++        sk->fflags |= NOTE_DISCONNECTED;
++        level |= NOTE_DISCONNECTED;
++    }
++    if (state & SOSTATE_CANTRCVMORE) {
++        sk->fflags |= NOTE_READCLOSED;
++        level |= NOTE_READCLOSED;
++    }
++    if (state & SOSTATE_CANTSENDMORE) {
++        sk->fflags |= NOTE_WRITECLOSED;
++        level |= NOTE_WRITECLOSED;
++    }
++
++    /* never suspended */
++    sk->fflags &= ~(NOTE_SUSPEND | NOTE_RESUME);
++    sk->delivered &= ~NOTE_SUSPEND;
++    sk->fflags |= NOTE_RESUME;
++    level |= NOTE_RESUME;
++
++    if (error != 0) {
++        ret = 1;
++        data = error;
++        kn->kev.flags |= EV_EOF;
++    } else {
++        data = (state & SOSTATE_ISCONNECTED) ? SOCKEV_CONNECTED : 0;
++        data |= (state & SOSTATE_ISDISCONNECTED) ? SOCKEV_DISCONNECTED : 0;
++    }
++
++    /* only the notes asked for, and the level-triggered ones only until they're delivered */
++    sk->fflags &= kn->kev.fflags & EVFILT_SOCK_ALL_MASK;
++    level &= kn->kev.fflags & EVFILT_SOCK_ALL_MASK;
++    level &= sk->delivered & EVFILT_SOCK_LEVEL_TRIGGER_MASK;
++    if (sk->fflags & ~level)
++        ret = 1;
++
++    if (ret && out != NULL) {
++        sk->delivered |= sk->fflags & EVFILT_SOCK_LEVEL_TRIGGER_MASK;
++        if (sk->fflags & NOTE_SUSPEND)
++            sk->delivered &= ~NOTE_RESUME;
++        if (sk->fflags & NOTE_RESUME)
++            sk->delivered &= ~NOTE_SUSPEND;
++
++        kevent_int_to_64(&kn->kev, out);
++        out->fflags = sk->fflags;
++        out->data = data;
++        if (kn->kev.flags & EV_CLEAR)
++            sk->fflags = 0;
++    }
++    return (ret);
++}
++
++static void
++sock_wake(struct knote *kn)
++{
++    uint64_t one = 1;
++
++    (void) write(sock_knote(kn)->efd, &one, sizeof(one));
++}
++
++void
++evfilt_sock_changed(struct knote *kn)
++{
++    if (!(kn->kev.flags & EV_DISABLE))
++        sock_wake(kn);
++}
++
++/* Watches fd in the knote's epoll set; one already watched counts (enabling an enabled knote, as XNU allows) */
++static int
++sock_watch_one(struct knote *kn, int fd, uint32_t events)
++{
++    struct epoll_event ev;
++
++    memset(&ev, 0, sizeof(ev));
++    ev.events = events;
++    ev.data.ptr = kn;
++    if (epoll_ctl(kn->kn_epollfd, EPOLL_CTL_ADD, fd, &ev) < 0 && errno != EEXIST)
++        return (-errno);
++    return (0);
++}
++
++/*
++ * EPOLLOUT: a connect completing, and the shutdowns Linux reports no other way; RDHUP, HUP, ERR: the rest.
++ * Edge-triggered, a socket that stays writable doesn't wake the knote again; data arriving never does. Both entries
++ * carry the knote, so one kevent() can return it twice: evfilt_sock_copyout() reports it once.
++ */
++static int
++sock_watch(struct knote *kn)
++{
++    int ret = sock_watch_one(kn, kn->kdata.kn_dupfd, EPOLLOUT | EPOLLRDHUP | EPOLLHUP | EPOLLERR | EPOLLET);
++
++    if (ret == 0)
++        ret = sock_watch_one(kn, sock_knote(kn)->efd, EPOLLIN | EPOLLET);
++    return (ret);
++}
++
++static void
++sock_unwatch(struct knote *kn)
++{
++    (void) epoll_ctl(kn->kn_epollfd, EPOLL_CTL_DEL, kn->kdata.kn_dupfd, NULL);
++    (void) epoll_ctl(kn->kn_epollfd, EPOLL_CTL_DEL, sock_knote(kn)->efd, NULL);
++}
++
++int
++evfilt_sock_copyout(struct kevent64_s *dst, struct knote *kn, void *ptr UNUSED)
++{
++    struct sock_knote *sk = sock_knote(kn);
++    uint64_t count;
++
++    /* another thread's kevent() delivered it from its other epoll entry, and disabled it (EV_DISPATCH) */
++    if (kn->kev.flags & EV_DISABLE) {
++        dst->filter = EVFILT_DROP;
++        return (0);
++    }
++
++    /* the knote's other epoll entry was ready too, in this same kevent(): it has been reported (or dropped) */
++    if (sk->gen == kn->kn_kq->kq_copyout_gen) {
++        dst->filter = EVFILT_DROP;
++        return (0);
++    }
++    sk->gen = kn->kn_kq->kq_copyout_gen;
++
++    /* whichever woke it */
++    (void) read(sk->efd, &count, sizeof(count));
++
++    if (!sock_evaluate(kn, 1, dst)) {
++        dst->filter = EVFILT_DROP;
++        return (0);
++    }
++
++    /* XNU keeps a knote without EV_CLEAR (or EV_ONESHOT, EV_DISPATCH) active, and looks again next time */
++    if (!(kn->kev.flags & (EV_CLEAR | EV_ONESHOT | EV_DISPATCH)))
++        sock_wake(kn);
++    return (0);
++}
++
++/* Returns 0, or a negative errno (kn_create's convention, private.h) */
++static int evfilt_sock_knote_create_1(struct filter *filt, struct knote *kn);
++
++int
++evfilt_sock_knote_create(struct filter *filt, struct knote *kn)
++{
++    int ret;
++
++    kn->kn_extra_buffer = calloc(1, sizeof(struct sock_knote));
++    if (kn->kn_extra_buffer == NULL)
++        return (-ENOMEM);
++    ret = evfilt_sock_knote_create_1(filt, kn);
++    if (ret < 0) {
++        free(kn->kn_extra_buffer);
++        kn->kn_extra_buffer = NULL;
++    }
++    return (ret);
++}
++
++static int
++evfilt_sock_knote_create_1(struct filter *filt, struct knote *kn)
++{
++    struct sock_knote *sk = sock_knote(kn);
++    struct socket_state_4libkqueue st;
++    int ret;
++
++    /* watched first: an error the program takes while the knote attaches is counted for it */
++    _socket_watch_4libkqueue(kn->kev.ident, 1);
++
++    /* XNU's sokqfilter() takes EVFILT_SOCK on sockets; the other descriptors' kqfilters refuse it */
++    ret = _socket_state_4libkqueue(kn->kev.ident, &st);
++    if (ret < 0) {
++        _socket_watch_4libkqueue(kn->kev.ident, -1);
++        return (ret == -ENOTSOCK ? -EINVAL : ret);
++    }
++
++    memset(sk, 0, sizeof(*sk));
++    sk->efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
++    if (sk->efd < 0) {
++        ret = -errno;
++        _socket_watch_4libkqueue(kn->kev.ident, -1);
++        return (ret);
++    }
++    kn->kdata.kn_dupfd = _dup_4libkqueue(kn->kev.ident);
++    if (kn->kdata.kn_dupfd < 0) {
++        ret = kn->kdata.kn_dupfd;
++        (void) __close_for_kqueue(sk->efd);
++        _socket_watch_4libkqueue(kn->kev.ident, -1);
++        return (ret);
++    }
++    kn->kn_epollfd = filter_epfd(filt);
++
++    /* filt_sockattach(): the knote is active at once if the socket's state has something to report */
++    if (sock_evaluate(kn, 0, NULL))
++        sock_wake(kn);
++
++    ret = sock_watch(kn);
++    if (ret < 0) {
++        sock_unwatch(kn);
++        _socket_watch_4libkqueue(kn->kdata.kn_dupfd, -1);
++        (void) __close_for_kqueue(kn->kdata.kn_dupfd);
++        (void) __close_for_kqueue(sk->efd);
++        return (ret);
++    }
++    return (0);
++}
++
++int
++evfilt_sock_knote_modify(struct filter *filt UNUSED, struct knote *kn, const struct kevent64_s *kev)
++{
++    struct sock_knote *sk = sock_knote(kn);
++
++    /* filt_socktouch(): forget delivering the level-triggered notes whose interest changed */
++    uint32_t changed = kn->kev.fflags ^ sk->delivered;
++    kn->kev.fflags = kev->fflags;
++    kn->kev.data = kev->data;
++    sk->delivered &= ~(changed & EVFILT_SOCK_LEVEL_TRIGGER_MASK);
++
++    if (sock_evaluate(kn, 1, NULL))
++        sock_wake(kn);
++    return (0);
++}
++
++int
++evfilt_sock_knote_delete(struct filter *filt UNUSED, struct knote *kn)
++{
++    if (!(kn->kev.flags & EV_DISABLE))
++        sock_unwatch(kn);
++    /* while the copy still names the socket */
++    _socket_watch_4libkqueue(kn->kdata.kn_dupfd, -1);
++    (void) __close_for_kqueue(kn->kdata.kn_dupfd);
++    (void) __close_for_kqueue(sock_knote(kn)->efd);
++    kn->kdata.kn_dupfd = -1;
++    free(kn->kn_extra_buffer);
++    kn->kn_extra_buffer = NULL;
++    return (0);
++}
++
++int
++evfilt_sock_knote_enable(struct filter *filt UNUSED, struct knote *kn)
++{
++    int ret = sock_watch(kn);
++
++    /* not watched at all rather than by half: it stays disabled */
++    if (ret < 0) {
++        sock_unwatch(kn);
++        kn->kev.flags |= EV_DISABLE;
++        errno = -ret;
++        return (-1);
++    }
++    /* XNU's knote_enable() looks at an enabled knote again: what it has to report doesn't wait for a new edge */
++    if (sock_evaluate(kn, 1, NULL))
++        sock_wake(kn);
++    return (0);
++}
++
++int
++evfilt_sock_knote_disable(struct filter *filt UNUSED, struct knote *kn)
++{
++    sock_unwatch(kn);
++    return (0);
++}
++
++/*
++ * The kqueue is being freed: its knotes go, as XNU's kqueue_close() drops a kqueue's knotes, so that their sockets'
++ * watches stop and their copies of the sockets are closed
++ */
++static void
++evfilt_sock_destroy(struct filter *filt)
++{
++    knote_delete_all(filt);
++}
++
++const struct filter evfilt_sock = {
++    EVFILT_SOCK,
++    NULL,
++    evfilt_sock_destroy,
++    evfilt_sock_copyout,
++    evfilt_sock_knote_create,
++    evfilt_sock_knote_modify,
++    evfilt_sock_knote_delete,
++    evfilt_sock_knote_enable,
++    evfilt_sock_knote_disable,
++};
+diff --git a/src/linux/vnode.c b/src/linux/vnode.c
+index 89d6608..ccedb8a 100644
+--- a/src/linux/vnode.c
++++ b/src/linux/vnode.c
+@@ -59,60 +59,413 @@ inotify_event_dump(struct inotify_event *evt)
+ #endif /* !NDEBUG */
+ 
+ 
+-#ifdef __APPLE__
+-# define VNODE_MTIME(sb) ((sb)->st_mtimespec)
+-#else
+-# define VNODE_MTIME(sb) ((sb)->st_mtim)
+-#endif
++#ifdef DARLING
++/*
++ * x86Sim: one inotify instance per kqueue, not one per knote.
++ *
++ * Upstream libkqueue gave every EVFILT_VNODE knote its own inotify instance. Linux limits a user to
++ * fs.inotify.max_user_instances (1024 here) for all of their processes, and every simulator process of every phone
++ * runs as the same user: two booted phones held ~940 (UserEventAgent 165 each, MobileSafari 56, ...). When the limit
++ * was reached inotify_init() failed with EMFILE, kn_create failed, kevent_copyin reported it as EBADF, and libdispatch
++ * (LIBDISPATCH_STRICT) crashed the registering process: fileproviderd's LaunchServices vnode source ~90 s into a
++ * boot, "BUG in libdispatch client: kevent vnode monitor [9: Bad file descriptor]". XNU has no such limit.
++ *
++ * Now the kqueue's vnode filter has one inotify instance with a watch per watched file (inotify gives a file one
++ * watch descriptor per instance; IN_MASK_ADD grows its mask for every knote on it) in the kqueue's epoll set behind
++ * a sentinel knote. When it is readable, copyout drains it, adds each event's mask to the pending masks of the knotes
++ * on that watch and raises the knote's eventfd; the knote's own epoll entry then reports it (with EV_CLEAR
++ * coalescing, as XNU's knote hint does). Disabling a knote only takes its eventfd out of the epoll set, so the watch
++ * survives (a file deleted while an EV_DISPATCH source was disabled still reports NOTE_DELETE on re-enable).
++ */
++#include <sys/eventfd.h>
++
++struct vn_watch {
++    struct knote *kn;
++    int wd;            /* inotify watch descriptor, -1 once inotify dropped it (IN_IGNORED) */
++    uint32_t self;     /* pending inotify events on the file itself */
++    uint32_t child;    /* pending events naming an entry of the watched directory */
++};
++
++struct evfilt_data {
++    int ifd;
++    struct knote sentinel;
++    struct vn_watch *w;
++    int nw, cap;
++};
++
++static struct evfilt_data *
++vn_data(struct filter *filt)
++{
++    struct evfilt_data *d = filt->kf_data;
++    struct epoll_event ev;
++    int e;
++
++    if (d != NULL)
++        return (d);
++    if ((d = calloc(1, sizeof(*d))) == NULL) {
++        errno = ENOMEM;
++        return (NULL);
++    }
++    d->ifd = inotify_init();
++    if (d->ifd < 0) {
++        e = errno;
++        free(d);
++        errno = e;
++        return (NULL);
++    }
++    (void) fcntl(d->ifd, F_SETFL, O_NONBLOCK);
++    d->sentinel.kev.filter = EVFILT_VNODE;
++    d->sentinel.kn_kq = filt->kf_kqueue;
++    d->sentinel.kdata.kn_eventfd = -1;
++    memset(&ev, 0, sizeof(ev));
++    ev.events = EPOLLIN;
++    ev.data.ptr = &d->sentinel;
++    if (epoll_ctl(filter_epfd(filt), EPOLL_CTL_ADD, d->ifd, &ev) < 0) {
++        e = errno;
++        (void) __close_for_kqueue(d->ifd);
++        free(d);
++        errno = e;
++        return (NULL);
++    }
++    filt->kf_data = d;
++    return (d);
++}
+ 
+-/* Remember the state of the vnode that the next events are compared to */
+ static void
+-vnode_snapshot(struct knote *kn, const struct stat *sb)
++evfilt_vnode_destroy(struct filter *filt)
++{
++    struct evfilt_data *d = filt->kf_data;
++    int i;
++
++    if (d == NULL)
++        return;
++    for (i = 0; i < d->nw; i++) {
++        if (d->w[i].kn->kdata.kn_eventfd >= 0) {
++            (void) __close_for_kqueue(d->w[i].kn->kdata.kn_eventfd);
++            d->w[i].kn->kdata.kn_eventfd = -1;
++        }
++    }
++    (void) __close_for_kqueue(d->ifd);
++    free(d->w);
++    free(d);
++    filt->kf_data = NULL;
++}
++
++static struct vn_watch *
++vn_find(struct evfilt_data *d, struct knote *kn)
+ {
+-    kn->data.vnode.nlink = sb->st_nlink;
+-    kn->data.vnode.size = sb->st_size;
+-    kn->data.vnode.mode = sb->st_mode;
+-    kn->data.vnode.uid = sb->st_uid;
+-    kn->data.vnode.gid = sb->st_gid;
+-    kn->data.vnode.mtime_sec = VNODE_MTIME(sb).tv_sec;
+-    kn->data.vnode.mtime_nsec = VNODE_MTIME(sb).tv_nsec;
++    int i;
++
++    for (i = 0; d != NULL && i < d->nw; i++)
++        if (d->w[i].kn == kn)
++            return (&d->w[i]);
++    return (NULL);
+ }
+ 
+-/* Whether an attribute other than the link count and size changed */
+-static int
+-vnode_attrs_changed(const struct knote *kn, const struct stat *sb)
++static uint32_t
++vn_mask(struct knote *kn)
+ {
+-    return (sb->st_mode != kn->data.vnode.mode
+-            || sb->st_uid != kn->data.vnode.uid
+-            || sb->st_gid != kn->data.vnode.gid
+-            || VNODE_MTIME(sb).tv_sec != kn->data.vnode.mtime_sec
+-            || VNODE_MTIME(sb).tv_nsec != kn->data.vnode.mtime_nsec);
++    struct stat dsb;
++    uint32_t mask = 0;
++
++    /* not IN_CLOSE: the watch is on the inode, so any process closing the file fired it; close() drops our knotes */
++    if (kn->kev.fflags & NOTE_DELETE)
++        mask |= IN_ATTRIB | IN_DELETE_SELF;
++    if (kn->kev.fflags & (NOTE_WRITE | NOTE_EXTEND))
++        mask |= IN_MODIFY | IN_ATTRIB;
++    if (kn->kev.fflags & (NOTE_ATTRIB | NOTE_LINK))
++        mask |= IN_ATTRIB;
++    if (kn->kev.fflags & NOTE_RENAME)
++        mask |= IN_MOVE_SELF;
++    /* on a directory, XNU's NOTE_WRITE is an entry added, removed or renamed */
++    if ((kn->kev.fflags & NOTE_WRITE) && fstat(kn->kev.ident, &dsb) == 0 && S_ISDIR(dsb.st_mode))
++        mask |= IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO;
++    /* inotify needs some event; copyout drops events no requested fflag covers. Always IN_DELETE_SELF: the watch
++       is shared, and a file's last knote must still learn that it is gone. */
++    return (mask | IN_DELETE_SELF);
+ }
+ 
+-/* Changes to the entries of a watched directory */
+-#define IN_ENTRY_EVENTS (IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO)
++/* the watch on the knote's open file (Linux's /proc/self/fd magic link: Darling's inotify_add_watch() would expand
++   a path into the prefix); returns wd or -errno */
++static long
++vn_add_watch(struct evfilt_data *d, struct knote *kn)
++{
++    char fdpath[64];
+ 
+-/* Read every event queued on the (nonblocking) inotify descriptor into buf.
+-   Returns the byte count, 0 if nothing is queued, -1 on error. */
+-static ssize_t
+-read_events(char *buf, size_t len, int inofd)
++    snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", (int) kn->kev.ident);
++    return (__linux_syscall(254 /* __NR_inotify_add_watch, x86-64 */, d->ifd, (long) fdpath,
++            (long) (vn_mask(kn) | IN_MASK_ADD)));
++}
++
++static int
++vn_epoll(struct filter *filt, struct knote *kn, int op)
+ {
++    struct epoll_event ev;
++
++    memset(&ev, 0, sizeof(ev));
++    ev.events = EPOLLIN;
++    ev.data.ptr = kn;
++    if (epoll_ctl(filter_epfd(filt), op, kn->kdata.kn_eventfd, &ev) < 0
++            && !(op == EPOLL_CTL_ADD && errno == EEXIST) && !(op == EPOLL_CTL_DEL && errno == ENOENT))
++        return (-1);
++    return (0);
++}
++
++/* drain the instance: pending masks for every knote on each event's watch, and raise their eventfds */
++static void
++vn_drain(struct evfilt_data *d)
++{
++    char buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
++    uint64_t one = 1;
+     ssize_t n;
++    int i;
+ 
+     for (;;) {
+-        n = read(inofd, buf, len);
+-        if (n >= 0)
+-            break;
+-        if (errno == EINTR)
++        n = read(d->ifd, buf, sizeof(buf));
++        if (n < 0 && errno == EINTR)
+             continue;
+-        if (errno == EAGAIN)
+-            return (0);
+-        dbg_perror("read");
++        if (n <= 0)
++            break;
++        for (char *p = buf; p + sizeof(struct inotify_event) <= buf + n; ) {
++            struct inotify_event *ev = (struct inotify_event *) p;
++            p += sizeof(*ev) + ev->len;
++            dbg_printf("inotify event: %s", inotify_event_dump(ev));
++            if (ev->wd < 0)  /* IN_Q_OVERFLOW */
++                continue;
++            for (i = 0; i < d->nw; i++) {
++                struct vn_watch *w = &d->w[i];
++                if (w->wd != ev->wd)
++                    continue;
++                if (ev->mask & IN_IGNORED) {
++                    w->wd = -1;
++                    continue;
++                }
++                if (ev->len > 0)
++                    w->child |= ev->mask;
++                else
++                    w->self |= ev->mask;
++                if (w->kn->kdata.kn_eventfd >= 0)
++                    (void) !write(w->kn->kdata.kn_eventfd, &one, sizeof(one));
++            }
++        }
++    }
++}
++
++int
++evfilt_vnode_copyout(struct kevent64_s *dst, struct knote *src, void *ptr UNUSED)
++{
++    struct filter *filt = &src->kn_kq->kq_filt[~EVFILT_VNODE];
++    struct evfilt_data *d = filt->kf_data;
++    struct vn_watch *w;
++    uint32_t self, child;
++    uint64_t cnt;
++    struct stat sb;
++
++    if (d != NULL && src == &d->sentinel) {
++        vn_drain(d);
++        dst->filter = EVFILT_DROP;
++        return (0);
++    }
++    if (src->kdata.kn_eventfd >= 0)
++        (void) !read(src->kdata.kn_eventfd, &cnt, sizeof(cnt));
++    w = vn_find(d, src);
++    if (w == NULL || (w->self | w->child) == 0) {
++        /* nothing pending (another thread's kevent() took it) */
++        dst->filter = EVFILT_DROP;
++        return (0);
++    }
++    self = w->self;
++    child = w->child;
++    w->self = w->child = 0;
++
++    kevent_int_to_64(&src->kev, dst);
++    dst->data = 0;
++    dst->fflags = 0; /* what happened, not every requested flag */
++
++    /* an entry of a watched directory added, removed or renamed is a write of the directory; a child's own data or
++       attributes changing is not */
++    if ((child & (IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO)) && (src->kev.fflags & NOTE_WRITE))
++        dst->fflags |= NOTE_WRITE;
++
++    if ((self & (IN_ATTRIB | IN_MODIFY)) && fstat(src->kev.ident, &sb) == 0) {
++        if (sb.st_nlink == 0 && (src->kev.fflags & NOTE_DELETE))
++            dst->fflags |= NOTE_DELETE;
++        if (sb.st_nlink != src->data.vnode.nlink && (src->kev.fflags & NOTE_LINK))
++            dst->fflags |= NOTE_LINK;
++        if (sb.st_size > src->data.vnode.size && (src->kev.fflags & NOTE_EXTEND))
++            dst->fflags |= NOTE_EXTEND;
++        src->data.vnode.nlink = sb.st_nlink;
++        src->data.vnode.size = sb.st_size;
++    }
++    if ((self & IN_MODIFY) && (src->kev.fflags & NOTE_WRITE))
++        dst->fflags |= NOTE_WRITE;
++    if ((self & IN_ATTRIB) && (src->kev.fflags & NOTE_ATTRIB))
++        dst->fflags |= NOTE_ATTRIB;
++    if ((self & IN_MOVE_SELF) && (src->kev.fflags & NOTE_RENAME))
++        dst->fflags |= NOTE_RENAME;
++    if ((self & IN_DELETE_SELF) && (src->kev.fflags & NOTE_DELETE))
++        dst->fflags |= NOTE_DELETE;
++
++    if (dst->fflags == 0)  /* an event none of the requested fflags cover (XNU wouldn't fire) */
++        dst->filter = EVFILT_DROP;
++    return (0);
++}
++
++int evfilt_vnode_knote_delete(struct filter *, struct knote *);
++
++static int
++vn_errno(long r)
++{
++    return (r == -ENOENT || r == -EACCES || r == -ENOSPC || r == -ENOMEM) ? (int) -r : EINVAL;
++}
++
++int
++evfilt_vnode_knote_create(struct filter *filt, struct knote *kn)
++{
++    struct evfilt_data *d;
++    struct vn_watch *w;
++    struct stat sb;
++    long wd;
++    int e;
++
++    kn->kdata.kn_eventfd = -1;
++    if (fstat(kn->kev.ident, &sb) < 0)
++        return (-EBADF);
++    kn->data.vnode.nlink = sb.st_nlink;
++    kn->data.vnode.size = sb.st_size;
++
++    if ((d = vn_data(filt)) == NULL)
++        return (-(errno ? errno : ENOMEM));
++    if (d->nw == d->cap) {
++        int cap = d->cap ? d->cap * 2 : 16;
++        struct vn_watch *nwp = realloc(d->w, cap * sizeof(*nwp));
++        if (nwp == NULL)
++            return (-ENOMEM);
++        d->w = nwp;
++        d->cap = cap;
++    }
++    wd = vn_add_watch(d, kn);
++    if (wd < 0) {
++        dbg_printf("inotify_add_watch(2): %ld", wd);
++        return (-vn_errno(wd));
++    }
++    kn->kdata.kn_eventfd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
++    if (kn->kdata.kn_eventfd < 0) {
++        e = errno;
++        kn->kdata.kn_eventfd = -1;
++        return (-(e ? e : ENOMEM));
++    }
++    kn->kev.data = wd;
++    w = &d->w[d->nw++];
++    memset(w, 0, sizeof(*w));
++    w->kn = kn;
++    w->wd = (int) wd;
++    if (vn_epoll(filt, kn, EPOLL_CTL_ADD) < 0) {
++        e = errno;
++        evfilt_vnode_knote_delete(filt, kn);
++        return (-(e ? e : ENOMEM));
++    }
++    return (0);
++}
++
++int
++evfilt_vnode_knote_modify(struct filter *filt, struct knote *kn, const struct kevent64_s *kev)
++{
++    /* EV_ADD on an existing vnode knote takes the new fflags (XNU's filt_vntouch) */
++    struct evfilt_data *d = filt->kf_data;
++    struct vn_watch *w = vn_find(d, kn);
++    long wd;
++
++    if (w == NULL)
++        return (-1);
++    if (kev->fflags == kn->kev.fflags)
++        return (0);
++    kn->kev.fflags = kev->fflags;
++    wd = vn_add_watch(d, kn);
++    if (wd < 0) {
++        errno = vn_errno(wd);
+         return (-1);
+     }
++    w->wd = (int) wd;
++    kn->kev.data = wd;
++    return (0);
++}
++
++int
++evfilt_vnode_knote_delete(struct filter *filt, struct knote *kn)
++{
++    struct evfilt_data *d = filt->kf_data;
++    struct vn_watch *w = vn_find(d, kn);
++    int i, wd, shared = 0;
++
++    if (kn->kdata.kn_eventfd >= 0) {
++        (void) vn_epoll(filt, kn, EPOLL_CTL_DEL);
++        (void) __close_for_kqueue(kn->kdata.kn_eventfd);
++        kn->kdata.kn_eventfd = -1;
++    }
++    if (w == NULL)
++        return (0);
++    wd = w->wd;
++    *w = d->w[--d->nw];
++    for (i = 0; i < d->nw; i++)
++        if (d->w[i].wd == wd)
++            shared = 1;
++    if (wd >= 0 && !shared)
++        (void) __linux_syscall(255 /* __NR_inotify_rm_watch, x86-64 */, d->ifd, wd);
++    return (0);
++}
++
++int
++evfilt_vnode_knote_enable(struct filter *filt, struct knote *kn)
++{
++    if (kn->kdata.kn_eventfd < 0)
++        return (-1);
++    return (vn_epoll(filt, kn, EPOLL_CTL_ADD));
++}
++
++int
++evfilt_vnode_knote_disable(struct filter *filt, struct knote *kn)
++{
++    if (kn->kdata.kn_eventfd < 0)
++        return (0);
++    return (vn_epoll(filt, kn, EPOLL_CTL_DEL));
++}
++
++const struct filter evfilt_vnode = {
++    EVFILT_VNODE,
++    NULL,
++    evfilt_vnode_destroy,
++    evfilt_vnode_copyout,
++    evfilt_vnode_knote_create,
++    evfilt_vnode_knote_modify,
++    evfilt_vnode_knote_delete,
++    evfilt_vnode_knote_enable,
++    evfilt_vnode_knote_disable,
++};
++
++#else /* !DARLING */
++
++/* TODO: USE this to get events with name field */
++int
++get_one_event(struct inotify_event *dst, int inofd)
++{
++    ssize_t n;
++
++    dbg_puts("reading one inotify event");
++    for (;;) {
++        n = read(inofd, dst, sizeof(*dst) + 255 + 1);
++        if (n < 0) {
++            if (errno == EINTR)
++                continue;
++            dbg_perror("read");
++            return (-1);
++        } else {
++            break;
++        }
++    }
+     dbg_printf("read(2) from inotify wd: %ld bytes", (long) n);
+ 
+-    return (n);
++    return (0);
+ }
+ 
+ static int
+@@ -128,41 +481,79 @@ add_watch(struct filter *filt, struct knote *kn)
+         return (-1);
+ 
+     /* Convert the fflags to the inotify mask */
+-    /* Closing another descriptor for this inode is not a vnode event, so
+-       IN_CLOSE is not watched. */
++#ifdef DARLING
++    /*
++     * x86Sim: not IN_CLOSE. The watch is on the file (inode), so IN_CLOSE fired whenever any process closed it
++     * (cfprefsd reading a plist), and copyout then deleted the knote. Darling's close() hook (kqueue_closed_fd)
++     * already drops the knotes of a descriptor this process closes, as XNU does.
++     */
+     mask = 0;
++#else
++    mask = IN_CLOSE;
++#endif
+     if (kn->kev.fflags & NOTE_DELETE)
+         mask |= IN_ATTRIB | IN_DELETE_SELF;
+-    /* Adding, removing or renaming an entry of a directory writes to the
+-       directory; inotify reports those only for directories. */
+-    if (kn->kev.fflags & NOTE_WRITE)
+-        mask |= IN_MODIFY | IN_ENTRY_EVENTS;
++    if (kn->kev.fflags & NOTE_WRITE)      
++        mask |= IN_MODIFY | IN_ATTRIB;
+     if (kn->kev.fflags & NOTE_EXTEND)
+-        mask |= IN_MODIFY;
+-    /* A truncation arrives as IN_MODIFY, see evfilt_vnode_copyout() */
+-    if (kn->kev.fflags & NOTE_ATTRIB)
+-        mask |= IN_ATTRIB | IN_MODIFY;
+-    /* A subdirectory's ".." is a link to its parent */
+-    if (kn->kev.fflags & NOTE_LINK)
+-        mask |= IN_ATTRIB | IN_ENTRY_EVENTS;
++        mask |= IN_MODIFY | IN_ATTRIB;
++    if ((kn->kev.fflags & NOTE_ATTRIB) || 
++            (kn->kev.fflags & NOTE_LINK))
++        mask |= IN_ATTRIB;
+     if (kn->kev.fflags & NOTE_RENAME)
+         mask |= IN_MOVE_SELF;
+-    /* No IN_ONESHOT: it would consume the watch on an event that copyout
+-       drops, while the core only deletes a one-shot knote on delivery. */
+-    if (mask == 0)
+-        mask = IN_ATTRIB; /* inotify rejects an empty mask; its events are dropped */
++#ifdef DARLING
++    /*
++     * x86Sim: on a directory, XNU's NOTE_WRITE means an entry was added, removed or renamed. inotify reports those as
++     * IN_CREATE/IN_DELETE/IN_MOVED_FROM/IN_MOVED_TO on the directory's watch (IN_MODIFY there is a child's data
++     * changing, which copyout now ignores). Without this, a directory watch never fired.
++     */
++    {
++        struct stat dsb;
++        if ((kn->kev.fflags & NOTE_WRITE) && fstat(kn->kev.ident, &dsb) == 0 && S_ISDIR(dsb.st_mode))
++            mask |= IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO;
++    }
++    if (mask == 0) /* x86Sim: inotify needs some event; copyout drops events that map to no requested fflags */
++        mask = IN_DELETE_SELF;
++#endif
++    if (kn->kev.flags & EV_ONESHOT)
++        mask |= IN_ONESHOT;
+ 
+     /* Create an inotify descriptor */
+-    ifd = inotify_init1(IN_NONBLOCK);
++    ifd = inotify_init();
+     if (ifd < 0) {
+-        dbg_perror("inotify_init1(2)");
++        dbg_perror("inotify_init(2)");
+         return (-1);
+     }
++#ifdef DARLING
++    /* x86Sim: non-blocking, so a copyout with nothing left to read can't hang the kevent caller */
++    (void) fcntl(ifd, F_SETFL, O_NONBLOCK);
++#endif
+ 
+     /* Add the watch */
+     dbg_printf("inotify_add_watch(2); inofd=%d, %s, path=%s", 
+             ifd, inotify_mask_dump(mask), path);
++#ifdef DARLING
++    /*
++     * x86Sim: the path read from /proc/<pid>/fd/<n> is a Linux path, and Darling's inotify_add_watch() expands every
++     * path into the prefix: a file outside it (/home/... -> <prefix>/home/...) was never found, the kevent failed
++     * and libdispatch crashed the process (fileproviderd: the simulator's memory-pressure source is a vnode watch on
++     * $SIMULATOR_MEMORY_WARNINGS). Watch the open file itself, through Linux's /proc/self/fd/<n> magic link.
++     */
++    {
++        char fdpath[64];
++        long r;
++        snprintf(fdpath, sizeof(fdpath), "/proc/self/fd/%d", (int) kn->kev.ident);
++        r = __linux_syscall(254 /* __NR_inotify_add_watch, x86-64 */, ifd, (long) fdpath, mask);
++        if (r < 0) {
++            errno = (r == -2) ? ENOENT : (r == -13) ? EACCES : (r == -28) ? ENOSPC : EINVAL;
++            kn->kev.data = -1;
++        } else
++            kn->kev.data = r;
++    }
++#else
+     kn->kev.data = inotify_add_watch(ifd, path, mask);
++#endif
+     if (kn->kev.data < 0) {
+         dbg_perror("inotify_add_watch(2)");
+         goto errout;
+@@ -207,128 +598,93 @@ delete_watch(struct filter *filt, struct knote *kn)
+ int
+ evfilt_vnode_copyout(struct kevent64_s *dst, struct knote *src, void *ptr UNUSED)
+ {
+-    /* One read returns every queued event that fits; all of them belong to
+-       this copyout, so none may be left to be dropped with the first. */
+-    char buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
+-    struct inotify_event *evt;
++    struct inotify_event* evt = (struct inotify_event*) __builtin_alloca(sizeof(struct inotify_event) + 255 + 1);
+     struct stat sb;
+-    uint32_t mask = 0;      /* events of the vnode itself */
+-    uint32_t fflags = 0;
+-    int entries = 0;        /* an entry of the directory changed */
+-    int subdirs = 0;        /* a subdirectory was added or removed */
+-    int moved_dir = 0;      /* a subdirectory was renamed from this directory... */
+-    uint32_t moved_cookie = 0; /* ...in the rename with this cookie */
+-    int attrib;
+-    int truncated = 0;
+-    ssize_t n, off;
+-
+-    n = read_events(buf, sizeof(buf), src->kdata.kn_inotifyfd);
+-    if (n < 0)
++
++    if (get_one_event(evt, src->kdata.kn_inotifyfd) < 0) {
++#ifdef DARLING
++        /* x86Sim: nothing to read (another thread took it; the descriptor is non-blocking): not an error, which
++           would abort() in linux_kevent_copyout */
++        dst->filter = EVFILT_DROP;
++        return (0);
++#else
+         return (-1);
+-    for (off = 0; off + (ssize_t) sizeof(*evt) <= n; off += sizeof(*evt) + evt->len) {
+-        evt = (struct inotify_event *) (buf + off);
+-        dbg_printf("inotify event: %s", inotify_event_dump(evt));
+-        if (evt->len == 0) {
+-            mask |= evt->mask;
+-            continue;
+-        }
++#endif
++    }
+ 
+-        /* A named event is about an entry of the watched directory. Writes
+-           to and attribute changes of the entries are not events of the
+-           directory; only adding, removing and renaming entries are. */
+-        if (!(evt->mask & IN_ENTRY_EVENTS))
+-            continue;
+-        entries = 1;
+-        if (!(evt->mask & IN_ISDIR))
+-            continue;
++    dbg_printf("inotify event: %s", inotify_event_dump(evt));
++    if (evt->mask & IN_IGNORED) {
++        /* TODO: possibly return error when fs is unmounted */
++        dst->filter = EVFILT_DROP;
++        return (0);
++    }
+ 
+-        /* Adding or removing a subdirectory changes the directory's link
+-           count; renaming one within the directory does not. The two
+-           halves of such a rename are queued next to each other. */
+-        if ((evt->mask & IN_MOVED_TO) && moved_dir && evt->cookie == moved_cookie) {
+-            moved_dir = 0;
+-            continue;
+-        }
+-        if (moved_dir)
+-            subdirs = 1;
+-        moved_dir = 0;
+-        if (evt->mask & IN_MOVED_FROM) {
+-            moved_dir = 1;
+-            moved_cookie = evt->cookie;
+-        } else {
+-            subdirs = 1;
+-        }
++    /* Check if the watched file has been closed, and 
++       XXX-this may not exactly match the kevent() behavior if multiple file de
++scriptors reference the same file.
++    */
++    if (evt->mask & IN_CLOSE_WRITE || evt->mask & IN_CLOSE_NOWRITE) {
++        src->kn_flags |= EV_ONESHOT; /* KLUDGE: causes the knote to be deleted */
++        dst->filter = EVFILT_DROP_POSTPROCESS; /* KLUDGE: causes the event to be discarded */
++        return (0);
+     }
+-    if (moved_dir)
+-        subdirs = 1;
+ 
+     kevent_int_to_64(&src->kev, dst);
+     dst->data = 0;
++#ifdef DARLING
++    dst->fflags = 0; /* x86Sim: report what happened, not every requested flag (filled in below) */
++    if (evt->len > 0) {
++        /* x86Sim: an event about an entry of a watched directory: only adding, removing or renaming one is a write
++           of the directory (XNU's NOTE_WRITE); a child's own data or attributes changing is not */
++        if ((evt->mask & (IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO)) && (src->kev.fflags & NOTE_WRITE))
++            dst->fflags = NOTE_WRITE;
++        else
++            dst->filter = EVFILT_DROP;
++        return (0);
++    }
++#endif
+ 
+     /* No error checking because fstat(2) should rarely fail */
+     //FIXME: EINTR
+-    attrib = mask & IN_ATTRIB;
+-    if ((mask & (IN_ATTRIB | IN_MODIFY) || entries)
++    if ((evt->mask & IN_ATTRIB || evt->mask & IN_MODIFY) 
+         && fstat(src->kev.ident, &sb) == 0) {
+-        if (sb.st_nlink != src->data.vnode.nlink) {
+-            fflags |= NOTE_LINK;
+-            /* inotify reports a link count change as IN_ATTRIB; it is an
+-               attribute change only if something else changed too */
+-            if (!vnode_attrs_changed(src, &sb))
+-                attrib = 0;
+-        }
+-        /* Removing any name of a file is an unlink() of it, while a
+-           directory's link count also drops when a subdirectory is
+-           removed */
+-        if (sb.st_nlink == 0
+-            || (!S_ISDIR(sb.st_mode) && sb.st_nlink < src->data.vnode.nlink))
+-            fflags |= NOTE_DELETE;
++        if (sb.st_nlink == 0 && src->kev.fflags & NOTE_DELETE) 
++            dst->fflags |= NOTE_DELETE;
++        if (sb.st_nlink != src->data.vnode.nlink && src->kev.fflags & NOTE_LINK) 
++            dst->fflags |= NOTE_LINK;
+ #if HAVE_NOTE_TRUNCATE
+-        if (sb.st_nsize == 0)
+-            fflags |= NOTE_TRUNCATE;
++        if (sb.st_nsize == 0 && src->kev.fflags & NOTE_TRUNCATE) 
++            dst->fflags |= NOTE_TRUNCATE;
+ #endif
+-        /* A directory grows with its entries, which is reported as
+-           NOTE_WRITE only */
+-        if (!S_ISDIR(sb.st_mode) && sb.st_size > src->data.vnode.size)
+-            fflags |= NOTE_EXTEND;
+-        /* QUIRK: a truncation is reported as NOTE_ATTRIB, not NOTE_WRITE
+-           (kqueue(2) does not say). inotify reports it as IN_MODIFY like a
+-           write; a write never makes a file smaller, so a smaller file
+-           after IN_MODIFY was truncated. Truncations that keep or grow
+-           the size cannot be told apart from writes and stay NOTE_WRITE.
+-           Evidence: black-box observation on macOS 27.0.1 arm64 (tier 2):
+-           ftruncate() to a smaller size and open(O_TRUNC) give only
+-           NOTE_ATTRIB with every vnode note requested.
+-           Test: test_kevent_vnode_truncate_is_attrib (test/vnode.c) */
+-        if (mask & IN_MODIFY && S_ISREG(sb.st_mode)
+-            && sb.st_size < src->data.vnode.size)
+-            truncated = 1;
+-        vnode_snapshot(src, &sb);
++        if (sb.st_size > src->data.vnode.size && src->kev.fflags & NOTE_WRITE) 
++            dst->fflags |= NOTE_EXTEND;
++       src->data.vnode.nlink = sb.st_nlink;
++       src->data.vnode.size = sb.st_size;
+     }
+ 
+-    if ((mask & IN_MODIFY && !truncated) || entries)
+-        fflags |= NOTE_WRITE;
+-    if (subdirs)
+-        fflags |= NOTE_LINK;
+-    if (attrib || truncated)
+-        fflags |= NOTE_ATTRIB;
+-    if (mask & IN_MOVE_SELF)
+-        fflags |= NOTE_RENAME;
+-    if (mask & IN_DELETE_SELF)
+-        fflags |= NOTE_DELETE;
+-#ifdef NOTE_REVOKE
+-    /* inotify always reports an unmount, then IN_IGNORED as the watch
+-       goes away; IN_IGNORED itself is not reported */
+-    if (mask & IN_UNMOUNT)
+-        fflags |= NOTE_REVOKE;
+-#endif
+-
+-    /* Report only the requested events that happened (an IN_ATTRIB may be
+-       seen only because inotify needs a mask, or nothing was queued) */
+-    dst->fflags = fflags & src->kev.fflags;
++    if (evt->mask & IN_MODIFY && src->kev.fflags & NOTE_WRITE) 
++        dst->fflags |= NOTE_WRITE;
++    if (evt->mask & IN_ATTRIB && src->kev.fflags & NOTE_ATTRIB) 
++        dst->fflags |= NOTE_ATTRIB;
++    if (evt->mask & IN_MOVE_SELF && src->kev.fflags & NOTE_RENAME) 
++        dst->fflags |= NOTE_RENAME;
++    if (evt->mask & IN_DELETE_SELF && src->kev.fflags & NOTE_DELETE) 
++        dst->fflags |= NOTE_DELETE;
++
++    if (evt->mask & IN_MODIFY && src->kev.fflags & NOTE_WRITE) 
++        dst->fflags |= NOTE_WRITE;
++    if (evt->mask & IN_ATTRIB && src->kev.fflags & NOTE_ATTRIB) 
++        dst->fflags |= NOTE_ATTRIB;
++    if (evt->mask & IN_MOVE_SELF && src->kev.fflags & NOTE_RENAME) 
++        dst->fflags |= NOTE_RENAME;
++    if (evt->mask & IN_DELETE_SELF && src->kev.fflags & NOTE_DELETE) 
++        dst->fflags |= NOTE_DELETE;
++
++#ifdef DARLING
++    /* x86Sim: an event none of the requested fflags cover (XNU wouldn't fire) */
+     if (dst->fflags == 0)
+         dst->filter = EVFILT_DROP;
+-
++#endif
+     return (0);
+ }
+ 
+@@ -341,8 +697,12 @@ evfilt_vnode_knote_create(struct filter *filt, struct knote *kn)
+         dbg_puts("fstat failed");
+         return (-1);
+     }
+-    vnode_snapshot(kn, &sb);
++    kn->data.vnode.nlink = sb.st_nlink;
++    kn->data.vnode.size = sb.st_size;
+     kn->kev.data = -1;
++#ifdef DARLING
++    kn->kdata.kn_inotifyfd = -1; /* x86Sim: no watch yet (see evfilt_vnode_knote_enable) */
++#endif
+ 
+     return (add_watch(filt, kn));
+ }
+@@ -351,15 +711,26 @@ int
+ evfilt_vnode_knote_modify(struct filter *filt, struct knote *kn, 
+         const struct kevent64_s *kev)
+ {
+-    /* Re-adding the registration replaces the events it watches for. An
+-       enabled knote gets a new watch with the new mask; a disabled one
+-       has no watch, and enabling it creates one from the new flags. */
++#ifdef DARLING
++    /*
++     * x86Sim: EV_ADD on an existing vnode knote takes the new fflags (XNU's filt_vntouch). It was a stub that
++     * failed, so libdispatch saw the update as an error (LIBDISPATCH_STRICT processes such as fileproviderd crash on
++     * any kevent error).
++     */
++    if (kev->fflags == kn->kev.fflags && kn->kdata.kn_inotifyfd >= 0)
++        return (0);
+     kn->kev.fflags = kev->fflags;
+     if (kn->kev.flags & EV_DISABLE)
+         return (0);
+     if (delete_watch(filt, kn) < 0)
+         return (-1);
+     return (add_watch(filt, kn));
++#else
++    (void)filt;
++    (void)kn;
++    (void)kev;
++    return (-1); /* FIXME - STUB */
++#endif
+ }
+ 
+ int
+@@ -371,6 +742,16 @@ evfilt_vnode_knote_delete(struct filter *filt, struct knote *kn)
+ int
+ evfilt_vnode_knote_enable(struct filter *filt, struct knote *kn)
+ {
++#ifdef DARLING
++    /*
++     * x86Sim: EV_ENABLE on a knote that is already watching. add_watch() made a second inotify instance and lost
++     * the first (still open, still in the epoll set): every re-enable leaked one, until inotify_init() failed with
++     * EMFILE (the per-user instance limit) and the next vnode EV_ADD in any simulator process failed
++     * (fileproviderd: "vnode add" EMFILE, crashed by LIBDISPATCH_STRICT).
++     */
++    if (kn->kdata.kn_inotifyfd >= 0)
++        return (0);
++#endif
+     return add_watch(filt, kn);
+ }
+ 
+@@ -391,3 +772,5 @@ const struct filter evfilt_vnode = {
+     evfilt_vnode_knote_enable,
+     evfilt_vnode_knote_disable,        
+ };
++
++#endif /* DARLING */
+diff --git a/src/linux/write.c b/src/linux/write.c
+index 39978aa..9b5a697 100644
+--- a/src/linux/write.c
++++ b/src/linux/write.c
+@@ -27,7 +27,9 @@
+ #include <sys/socket.h>
+ #include <sys/types.h>
+ #include <string.h>
++#include <poll.h>
+ #include <unistd.h>
++#include <sys/eventfd.h>
+ 
+ #include <darling/emulation/linux_premigration/ext/for-libkqueue.h>
+ 
+@@ -83,6 +85,38 @@ evfilt_socket_copyout(struct kevent64_s *dst, struct knote *src, void *ptr)
+     struct epoll_event * const ev = (struct epoll_event *) ptr;
+ 
+     epoll_event_dump(ev);
++#ifdef DARLING
++    /* x86Sim: Linux reports a stream socket that was never connected as writable and hung up (TCP_CLOSE); XNU's
++     * sowriteable() is false for it (PR_CONNREQUIRED, not connected, no error). Network.framework took that EV_EOF as
++     * the flow failing (ENETDOWN). Dropped, as EVFILT_READ's (read.c). */
++    if ((ev->events & EPOLLHUP) && !(ev->events & EPOLLERR)) {
++        struct socket_state_4libkqueue st;
++        /* the event may also be stale: epoll_wait() took it before connect() and the connection is up by now
++         * (the socket no longer hangs up): that EOF is dropped too */
++        struct pollfd now = { .fd = src->kdata.kn_dupfd, .events = POLLIN | POLLOUT };
++        int stale = poll(&now, 1, 0) == 1 && !(now.revents & (POLLHUP | POLLERR));
++        /* ... or connect() completed between that poll() and this state (loopback connects at once): connected,
++         * this direction open and no error is not a hang-up either (else EV_EOF reached the program before the
++         * connection's own events: Network.framework failed a TLS flow to 127.0.0.1 or the host's own address with
++         * ENETDOWN, ~1 in 2) */
++        if (_socket_state_4libkqueue(src->kdata.kn_dupfd, &st) == 0
++                && (stale || ((st.state & ~SOSTATE_EVCONNINFO) == 0 && st.error == 0)
++                    || ((st.state & SOSTATE_ISCONNECTED) && !(st.state & (SOSTATE_ISDISCONNECTED | SOSTATE_CANTSENDMORE)) && st.error == 0))) {
++            dst->filter = EVFILT_DROP;
++            /* EV_DISPATCH/EV_ONESHOT (EPOLLONESHOT): epoll disarmed the descriptor for this event, which the program
++             * never sees, so it never re-enables it: arm it again, edge-triggered, so the hang-up doesn't fire again
++             * but the connection's readiness does (the program's EV_ENABLE restores the knote's own events) */
++            if (src->data.events & EPOLLONESHOT) {
++                struct epoll_event rearm;
++                memset(&rearm, 0, sizeof(rearm));
++                rearm.events = src->data.events | EPOLLET;
++                rearm.data.ptr = src;
++                (void) epoll_ctl(src->kn_epollfd, EPOLL_CTL_MOD, src->kdata.kn_dupfd, &rearm);
++            }
++            return (0);
++        }
++    }
++#endif
+     kevent_int_to_64(&src->kev, dst);
+ #if defined(HAVE_EPOLLRDHUP)
+     if (ev->events & EPOLLRDHUP || ev->events & EPOLLHUP)
+@@ -91,8 +125,7 @@ evfilt_socket_copyout(struct kevent64_s *dst, struct knote *src, void *ptr)
+     if (ev->events & EPOLLHUP)
+         dst->flags |= EV_EOF;
+ #endif
+-    if (ev->events & EPOLLERR)
+-        dst->fflags = 1; /* FIXME: Return the actual socket error */
++    dst->fflags = linux_socket_eof_error(src, ev->events);
+           
+     /* On return, data contains the space remaining in the write buffer. */
+     dst->data = write_space_avail(dst->ident);
+@@ -108,9 +141,11 @@ evfilt_socket_knote_create(struct filter *filt, struct knote *kn)
+     if (linux_get_descriptor_type(kn) < 0)
+         return (-1);
+ 
++#ifndef DARLING
+     /* TODO: return EBADF? */
+     if (kn->kn_flags & KNFL_REGULAR_FILE)
+         return (-1);
++#endif
+ 
+     /* Convert the kevent into an epoll_event */
+     kn->data.events = EPOLLOUT;
+@@ -124,6 +159,17 @@ evfilt_socket_knote_create(struct filter *filt, struct knote *kn)
+     ev.events = kn->data.events;
+     ev.data.ptr = kn;
+ 
++#ifdef DARLING
++    /* x86Sim: a regular file is always writable to XNU (EVFILT_WRITE on a vnode), but epoll refuses regular files
++     * (EPERM): the registration failed (kevent EBADF), so a dispatch write source on a file never fired.
++     * MultipeerConnectivity's resource receiver writes what arrives into its temporary file that way: the transfer
++     * stalled at 0 bytes ("XDataStreamCloseFromSender received but have more bytes to write") and the resource was
++     * never delivered. An eventfd stands in for the file: always writable (EPOLLOUT), as read.c's surrogate is always
++     * readable; the copyout reports 1 byte of space (no socket buffer to measure). */
++    if (kn->kn_flags & KNFL_REGULAR_FILE)
++        kn->kdata.kn_dupfd = eventfd(0, EFD_CLOEXEC);
++    else
++#endif
+     /* Duplicate the fd to workaround epoll's poor design */
+ 	kn->kdata.kn_dupfd = _dup_4libkqueue(kn->kev.ident);
+ 
