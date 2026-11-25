@@ -24,7 +24,7 @@ index defb09f..67ddd77 100644
  #define DYLD_TSD_VENEER_WORDS      5
  #define DYLD_TSD_SLOT_MIN          16u
 diff --git a/src/dyld2.cpp b/src/dyld2.cpp
-index 7723026..da3d886 100644
+index 7723026..80c1031 100644
 --- a/src/dyld2.cpp
 +++ b/src/dyld2.cpp
 @@ -282,7 +282,9 @@ int amfi_check_dyld_policy_self(uint64_t input_flags, uint64_t* output_flags)
@@ -285,7 +285,7 @@ index 7723026..da3d886 100644
  		&munmap, 
  		&madvise,
  		&stat, 
-@@ -5757,9 +5990,67 @@ static const SyscallHelpers sSysCalls = {
+@@ -5757,10 +5990,94 @@ static const SyscallHelpers sSysCalls = {
  		&fstat,
  		&vm_copy,
  		// Added in version 14
@@ -352,9 +352,36 @@ index 7723026..da3d886 100644
 +#endif
 +
  __attribute__((noinline))
++#if __arm64__
++static void darlingApplyGuestEnvironment(const char* envp[])
++{
++	static const char prefix[] = "X86SIM_A64_GENV_";
++	const size_t prefixLen = sizeof(prefix) - 1;
++	for (int i = 0; envp[i] != NULL; ++i) {
++		if ( strncmp(envp[i], prefix, prefixLen) != 0 )
++			continue;
++		const char* assignment = envp[i] + prefixLen;  // "<NAME>=<value>"
++		const char* eq = strchr(assignment, '=');
++		if ( eq == NULL || eq == assignment )
++			continue;
++		size_t nameLen = (size_t)(eq - assignment) + 1;    // with the '='
++		bool replaced = false;
++		for (int j = 0; envp[j] != NULL; ++j) {
++			if ( j != i && strncmp(envp[j], assignment, nameLen) == 0 ) {
++				envp[j] = assignment;
++				replaced = true;
++			}
++		}
++		if ( !replaced )
++			envp[i] = assignment;
++	}
++}
++#endif
++
  static const char* useSimulatorDyld(int fd, const macho_header* mainExecutableMH, const char* dyldPath,
  								int argc, const char* argv[], const char* envp[], const char* apple[],
-@@ -5932,6 +6223,38 @@ static const char* useSimulatorDyld(int fd, const macho_header* mainExecutableMH
+ 								uintptr_t* startGlue, uintptr_t* mainAddr)
+@@ -5932,6 +6249,38 @@ static const char* useSimulatorDyld(int fd, const macho_header* mainExecutableMH
  	}
  	close(fd);
  
@@ -393,6 +420,22 @@ index 7723026..da3d886 100644
  	// Walk newly mapped dyld_sim load commands to find entry point
  	uintptr_t entry = 0;
  	bool unusedUsesCRT = false;
+@@ -6812,6 +7161,15 @@ _main(const macho_header* mainExecutableMH, uintptr_t mainExecutableSlide,
+ 		}
+ 	}
+ 
++#if __arm64__
++	// Darling (arm64): x86Sim's tools (its XCTest runner, for one) pass a simulator process's DYLD_* variables a second
++	// time as X86SIM_A64_GENV_DYLD_*, for x86Sim's translator, which hands them to the guest as they are: launchd_sim
++	// replaces an app's own DYLD_INSERT_LIBRARIES with its job's (libsimshim), and libXCTestBundleInject.dylib was never
++	// loaded. Natively there is no translator, so the same is done here, before dyld_sim reads the environment: each
++	// X86SIM_A64_GENV_<NAME>=<value> takes the place of <NAME>.
++	darlingApplyGuestEnvironment(envp);
++#endif
++
+ 	// if this is host dyld, check to see if iOS simulator is being run
+ 	const char* rootPath = _simple_getenv(envp, "DYLD_ROOT_PATH");
+ 	if ( (rootPath != NULL) ) {
 diff --git a/src/dyldSyscallInterface.h b/src/dyldSyscallInterface.h
 index 0dc540f..b69ba85 100644
 --- a/src/dyldSyscallInterface.h

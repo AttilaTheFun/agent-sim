@@ -29,9 +29,9 @@ launch (`simctl.py launch`); Metal works through mtlvk on lavapipe (48/49 of x86
 Reproducible from scratch with `scripts/setup-arm64.sh`.
 
 The home screen and apps draw (Settings, for one), since a fix to Darling's `mach_vm_region` for arm64's address
-space; widgets, the lock screen and speed are not checked yet.
-Darling's clock runs in nanoseconds where Apple's arm64 code expects 24 MHz ticks. No XCTest, no agent CLI, no
-Bazel integration.
+space; widgets, the lock screen and speed are not checked yet. Apple's code that reads the system counter gets
+Darling's clock (M1.1). XCTest logic and app-hosted unit tests run (M2). No UI tests, agent CLI or Bazel integration
+yet.
 
 Useful already: x86Sim's XCTest runner (`cli/libexec/xctest.py`) covers logic tests (the `xctest` tool), app-hosted
 unit tests (`libXCTestBundleInject`) and XCUITest (testmanagerd and XCTRunner), from an `.xctestrun` or explicit
@@ -60,6 +60,9 @@ Unit tests need no pixels and UI tests need few, so M2 and M3 run alongside M1 r
    draws them (x86Sim's reference screenshots), at about the same speed as x86Sim on comparable hardware.
 
 ### M2. XCTest in the container: logic and app-hosted unit tests
+
+Done (2026-11-25): XCTestDemo's logic and hosted bundles, built on Linux by rules_applecross, run in a container
+with x86Sim's runner and pass as in Xcode's simulator, with JUnit XML (docs/ARM64.md).
 
 1. Run x86Sim's `xctest.py` against an arm64 boot (it assumes `boot-a64.sh`'s layout and the translator's process
    model in places): logic bundles first, then app-hosted.

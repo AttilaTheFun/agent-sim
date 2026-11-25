@@ -39,8 +39,12 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   gets Darling's `mach_absolute_time` clock, as all other code does: dyld turns each such read into a trap
   libsystem_kernel answers (Darling counts nanoseconds, timebase 1/1, where Apple silicon counts 24 MHz ticks).
 - **XCTest.** `scripts/xip-platform.py` takes XCTest's iPhoneSimulator frameworks out of an Xcode .xip in about a
-  minute (`XCODE_XIP=... scripts/setup-arm64.sh`); Xcode's `xctest` agent runs in the device
-  (`simctl.py spawn`). Running test bundles (x86Sim's `cli/libexec/xctest.py`) is next.
+  minute (`XCODE_XIP=... scripts/setup-arm64.sh`). x86Sim's runner (`cli/libexec/xctest.py`) runs logic tests
+  (`--test-bundle B.xctest`, in Xcode's `xctest` agent) and app-hosted unit tests (`--app A.app --test-bundle
+  B.xctest`, injected into the installed app) with per-test results and JUnit XML. XCTestDemo's logic and hosted
+  bundles, built on Linux by rules_applecross (`tests/apps/XCTestDemo`), give the results they give in Xcode's
+  simulator: every test passes except the deliberate failures, which fail with their file and line, and the skipped
+  one, about 4 s for the logic bundle and 17 s for the hosted one (with the app's install) on a booted phone.
 
 ## What does not work yet
 

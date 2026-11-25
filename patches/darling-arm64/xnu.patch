@@ -12187,7 +12187,7 @@ index ac8fd31..6839acb 100644
  			break;
  	}
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/fcntl/openat.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/fcntl/openat.c
-index d5d6d24..a0f4d48 100644
+index d5d6d24..51f3b09 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/fcntl/openat.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/fcntl/openat.c
 @@ -11,8 +11,10 @@
@@ -12201,7 +12201,7 @@ index d5d6d24..a0f4d48 100644
  
  #include <darlingserver/rpc.h>
  
-@@ -29,6 +31,32 @@
+@@ -29,6 +31,38 @@
  extern int strcmp(const char *s1, const char *s2);
  extern char* strcpy(char* dst, const char* src);
  
@@ -12216,10 +12216,16 @@ index d5d6d24..a0f4d48 100644
 +#endif
 +static int reopen_non_symlink(int pfd, int linux_flags)
 +{
-+	unsigned long st[18]; // Linux x86_64 struct stat (144 bytes); st_mode is the u32 at offset 24
++	// Linux's struct stat (144 bytes on x86-64, 128 on arm64): st_mode is the u32 at offset 24 on x86-64 and at 16 on
++	// arm64 (its generic layout); reading x86-64's on arm64 took st_uid, and every O_SYMLINK open stayed O_PATH
++	unsigned long st[18];
 +	if (LINUX_SYSCALL(__NR_fstat, pfd, st) < 0)
 +		return pfd;
++#if defined(__aarch64__)
++	unsigned int fmt = ((unsigned int*) st)[4] & 0170000;
++#else
 +	unsigned int fmt = ((unsigned int*) st)[6] & 0170000;
++#endif
 +	if (fmt != 0100000 && fmt != 0040000) // S_IFREG, S_IFDIR
 +		return pfd;
 +	char path[32];
@@ -12234,7 +12240,7 @@ index d5d6d24..a0f4d48 100644
  long sys_openat(int fd, const char* filename, int flags, unsigned int mode)
  {
  	CANCELATION_POINT();
-@@ -72,6 +100,35 @@ long sys_openat_common(int fd, const char* filename, int flags, unsigned int mod
+@@ -72,6 +106,35 @@ long sys_openat_common(int fd, const char* filename, int flags, unsigned int mod
  		return nofile_limit_check_new(ret);
  	}
  
@@ -12270,7 +12276,7 @@ index d5d6d24..a0f4d48 100644
  	struct vchroot_expand_args vc;
  	// O_EXCL together with O_CREAT never follows a final symbolic link: a dangling or live link
  	// makes the call fail with EEXIST (POSIX open(2)) instead of creating or opening its target.
-@@ -100,8 +157,33 @@ long sys_openat_common(int fd, const char* filename, int flags, unsigned int mod
+@@ -100,8 +163,33 @@ long sys_openat_common(int fd, const char* filename, int flags, unsigned int mod
  	// `l` variant (e.g. `llistxattr` instead of `listxatrr`) or we're screwed
  
  	ret = LINUX_SYSCALL_C(cancelable, __NR_openat, vc.dfd, vc.path, linux_flags, mode);
@@ -14447,10 +14453,10 @@ index 3923d32..e885db7 100644
  {
  	uint32_t port_name = 0;
 diff --git a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fsctl.c b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fsctl.c
-index 8c978d3..6815f49 100644
+index 8c978d3..f13cb35 100644
 --- a/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fsctl.c
 +++ b/darling/src/libsystem_kernel/emulation/src/xnu_syscall/bsd/impl/misc/fsctl.c
-@@ -1,47 +1,318 @@
+@@ -1,47 +1,322 @@
 +#include <darling/emulation/conversion/stat/types.h>
 +#include <darling/emulation/conversion/common_at.h>
  #include <darling/emulation/xnu_syscall/bsd/impl/misc/fsctl.h>
@@ -14583,7 +14589,7 @@ index 8c978d3..6815f49 100644
 +#define DIRSTAT_MAX_DEPTH 32
 +#define DIRSTAT_MAX_ENTRIES 50000
 +
-+// Linux struct stat (x86_64): st_ino at 8, st_mode at 24, st_size at 48, st_ctim at 104
++// Linux struct stat: st_ino at 8, st_mode at 24 (x86-64) or 16 (arm64), st_size at 48, st_ctim at 104
 +static int dirstat_lstat(int dfd, const char* name, uint64_t* ino, uint32_t* mode, uint64_t* size, uint64_t* ctime_ns)
 +{
 +	unsigned long st[18];
@@ -14591,7 +14597,11 @@ index 8c978d3..6815f49 100644
 +	if (LINUX_SYSCALL(__NR_newfstatat, dfd, name, st, dfd == -100 ? 0 : 0x100 /* AT_SYMLINK_NOFOLLOW */) < 0)
 +		return -1;
 +	*ino = st[1];
++#if defined(__aarch64__)
++	*mode = ((unsigned int*) st)[4];
++#else
 +	*mode = ((unsigned int*) st)[6];
++#endif
 +	*size = st[6];
 +	*ctime_ns = st[13] * 1000000000ull + st[14];
 +	return 0;
