@@ -104,12 +104,15 @@ fn try_lock(dev: &Device) -> Result<Option<File>> {
 
 /// A phone for this test, held (the returned lock) for the whole run, so two tests never share one: the one named,
 /// else whichever running phone is free first. Tests wait for a phone rather than fail.
-pub fn take_phone(named: Option<Device>) -> Result<(Device, File)> {
+fn take_phone(named: Option<&Device>, skip: &[PathBuf]) -> Result<(Device, File)> {
     let mut said = false;
     loop {
-        let phones = match &named {
+        let phones: Vec<Device> = match named {
             Some(d) => vec![d.clone()],
-            None => running_phones()?,
+            None => running_phones()?
+                .into_iter()
+                .filter(|p| !skip.contains(&p.dir))
+                .collect(),
         };
         if phones.is_empty() {
             bail!("no phone runs: boot one with scripts/boot-arm64.sh (A64_PHONE=<n> for more)");
@@ -242,7 +245,9 @@ fn uninstall(x: &Path, dev: &Device, bid: &str) {
 }
 
 /// Runs the tests on the phone named, else on whichever is free; returns xctest.py's exit status: 0 when every test
-/// passed or was skipped, 1 when one failed, 2 when nothing could run.
+/// passed or was skipped, 1 when one failed, 2 when nothing could run. A phone that stops during the run (its Darling
+/// server gone, and launchd_sim with it) leaves the results meaningless: the test runs once more on another phone, if
+/// one is booted.
 pub fn xctest(named: Option<Device>, o: &Options) -> Result<i32> {
     let x = x86sim_root()?;
     let runner_py = x.join("cli/libexec/xctest.py");
@@ -253,8 +258,27 @@ pub fn xctest(named: Option<Device>, o: &Options) -> Result<i32> {
         );
     }
     let platforms = x.join("sdks");
-    let (phone, _lock) = take_phone(named)?;
-    let dev = &phone;
+    let mut stopped = Vec::new();
+    loop {
+        let (phone, _lock) = take_phone(named.as_ref(), &stopped)?;
+        let code = run_on(&phone, o, &x, &runner_py, &platforms)?;
+        let running = running_phones()?;
+        let alive = running.iter().any(|p| p.dir == phone.dir);
+        let another = running.iter().any(|p| p.dir != phone.dir);
+        if code != 0 && !alive && another && named.is_none() && stopped.is_empty() {
+            eprintln!(
+                "agent-sim xctest: {} stopped during the test; running it again on another phone",
+                phone.dir.display()
+            );
+            stopped.push(phone.dir.clone());
+            continue;
+        }
+        return Ok(code);
+    }
+}
+
+/// One run of the tests on a phone this test holds.
+fn run_on(dev: &Device, o: &Options, x: &Path, runner_py: &Path, platforms: &Path) -> Result<i32> {
 
     // inside the device's data directory, which the phone's processes see
     let work = dev
@@ -271,8 +295,8 @@ pub fn xctest(named: Option<Device>, o: &Options) -> Result<i32> {
     };
 
     let mut cmd = Command::new("python3");
-    cmd.arg(&runner_py)
-        .env("X86SIM_ROOT", &x)
+    cmd.arg(runner_py)
+        .env("X86SIM_ROOT", x)
         .env("X86SIM_DEVICE", &dev.dir);
     let mut installed = Vec::new();
     match (o.kind, &app) {
@@ -284,7 +308,7 @@ pub fn xctest(named: Option<Device>, o: &Options) -> Result<i32> {
             installed.push(bundle_id(app)?);
         }
         (Kind::Ui, Some(app)) => {
-            let runner = ui_runner(&platforms, &bundle, &work)?;
+            let runner = ui_runner(platforms, &bundle, &work)?;
             cmd.arg("--ui-test-runner")
                 .arg(&runner)
                 .arg("--app")
@@ -295,7 +319,7 @@ pub fn xctest(named: Option<Device>, o: &Options) -> Result<i32> {
         (_, None) => bail!("hosted and UI tests need the app (--app)"),
     }
     let out = o.out.clone().unwrap_or_else(|| work.join("out"));
-    cmd.arg("--platform").arg(&platforms).arg("--out").arg(&out);
+    cmd.arg("--platform").arg(platforms).arg("--out").arg(&out);
     cmd.arg("--timeout").arg(o.timeout.to_string());
     for t in &o.only {
         cmd.arg("--only-testing").arg(t);
@@ -306,7 +330,7 @@ pub fn xctest(named: Option<Device>, o: &Options) -> Result<i32> {
     let st = run(&mut cmd)?;
 
     for bid in &installed {
-        uninstall(&x, dev, bid);
+        uninstall(x, dev, bid);
     }
     // Bazel keeps what a test leaves in TEST_UNDECLARED_OUTPUTS_DIR (bazel-testlogs/<target>/test.outputs)
     if let Some(keep) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
