@@ -58,39 +58,73 @@ fn x86sim_root() -> Result<PathBuf> {
     Ok(PathBuf::from(home).join("x86sim"))
 }
 
-/// The arm64 boot's phone: `$A64_DEVICE`, else `$X86SIM_ROOT/var/device-a64` (scripts/boot-arm64.sh).
-pub fn default_device() -> Result<Device> {
-    let dir = match std::env::var_os("A64_DEVICE") {
-        Some(d) => PathBuf::from(d),
-        None => x86sim_root()?.join("var/device-a64"),
+/// The arm64 phones that run (scripts/boot-arm64.sh: `device-a64`, and `device-a64-<n>` for A64_PHONE=<n>): those
+/// whose launchd_sim is up, found by its bootstrap plist on the command line.
+fn running_phones() -> Result<Vec<Device>> {
+    let var = x86sim_root()?.join("var");
+    let mut cmdlines = Vec::new();
+    for e in std::fs::read_dir("/proc")?.flatten() {
+        if let Ok(c) = std::fs::read(e.path().join("cmdline")) {
+            if c.windows(11).any(|w| w == b"launchd_sim") {
+                cmdlines.push(String::from_utf8_lossy(&c).replace('\0', " "));
+            }
+        }
+    }
+    let mut phones = Vec::new();
+    let Ok(rd) = std::fs::read_dir(&var) else {
+        return Ok(phones);
     };
-    Device::find(&dir.to_string_lossy())
+    let mut dirs: Vec<PathBuf> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            let n = p.file_name().unwrap_or_default().to_string_lossy();
+            n == "device-a64" || n.starts_with("device-a64-")
+        })
+        .collect();
+    dirs.sort();
+    for d in dirs {
+        let plist = format!("{}/data/var/run/launchd_bootstrap.plist", d.display());
+        if d.join("sim.env").is_file() && cmdlines.iter().any(|c| c.contains(&plist)) {
+            phones.push(Device { dir: d });
+        }
+    }
+    Ok(phones)
 }
 
-/// The device's lock, held for the whole run: tests queue for a phone instead of sharing one.
-fn take_phone(dev: &Device) -> Result<File> {
+/// Locks a phone for this test, without waiting: None if another test has it.
+fn try_lock(dev: &Device) -> Result<Option<File>> {
     let path = dev.dir.join(".agent-sim-xctest.lock");
     let f = File::create(&path).with_context(|| format!("creating {}", path.display()))?;
     // SAFETY: flock(2) on a descriptor this File owns for as long as the lock is wanted; no memory is shared.
     #[allow(unsafe_code)]
-    let busy = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0;
-    if busy {
-        eprintln!(
-            "agent-sim xctest: waiting for {} (another test has it)",
-            dev.dir.display()
-        );
-        // SAFETY: as above, now blocking until the other test lets go.
-        #[allow(unsafe_code)]
-        let r = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
-        if r != 0 {
-            bail!(
-                "locking {}: {}",
-                path.display(),
-                std::io::Error::last_os_error()
-            );
+    let r = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    Ok((r == 0).then_some(f))
+}
+
+/// A phone for this test, held (the returned lock) for the whole run, so two tests never share one: the one named,
+/// else whichever running phone is free first. Tests wait for a phone rather than fail.
+pub fn take_phone(named: Option<Device>) -> Result<(Device, File)> {
+    let mut said = false;
+    loop {
+        let phones = match &named {
+            Some(d) => vec![d.clone()],
+            None => running_phones()?,
+        };
+        if phones.is_empty() {
+            bail!("no phone runs: boot one with scripts/boot-arm64.sh (A64_PHONE=<n> for more)");
         }
+        for p in phones {
+            if let Some(lock) = try_lock(&p)? {
+                return Ok((p, lock));
+            }
+        }
+        if !said {
+            eprintln!("agent-sim xctest: waiting for a phone (other tests have them)");
+            said = true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
-    Ok(f)
 }
 
 fn run(cmd: &mut Command) -> Result<std::process::ExitStatus> {
@@ -207,9 +241,9 @@ fn uninstall(x: &Path, dev: &Device, bid: &str) {
         .status();
 }
 
-/// Runs the tests; returns xctest.py's exit status: 0 when every test passed or was skipped, 1 when one failed, 2
-/// when nothing could run.
-pub fn xctest(dev: &Device, o: &Options) -> Result<i32> {
+/// Runs the tests on the phone named, else on whichever is free; returns xctest.py's exit status: 0 when every test
+/// passed or was skipped, 1 when one failed, 2 when nothing could run.
+pub fn xctest(named: Option<Device>, o: &Options) -> Result<i32> {
     let x = x86sim_root()?;
     let runner_py = x.join("cli/libexec/xctest.py");
     if !runner_py.is_file() {
@@ -219,7 +253,8 @@ pub fn xctest(dev: &Device, o: &Options) -> Result<i32> {
         );
     }
     let platforms = x.join("sdks");
-    let _phone = take_phone(dev)?;
+    let (phone, _lock) = take_phone(named)?;
+    let dev = &phone;
 
     // inside the device's data directory, which the phone's processes see
     let work = dev

@@ -200,7 +200,7 @@ enum Command {
     /// Time the streaming path on synthetic frames (for tuning).
     /// Run an XCTest bundle on the phone (arm64 Linux), as `bazel test` asks a test runner to: a logic bundle, a unit
     /// test bundle in its host app, or a UI test bundle driving its app. Exits 0 when every test passed or was skipped,
-    /// 1 when one failed, 2 when nothing ran. Waits if another test has the phone.
+    /// 1 when one failed, 2 when nothing ran. Takes whichever booted phone is free (or --device), waiting if none is.
     Xctest {
         /// The test bundle: an .xctest, or the .zip rules_apple makes of one.
         bundle: PathBuf,
@@ -285,11 +285,11 @@ fn main() -> Result<()> {
             out,
             timeout,
         } => {
-            // the arm64 boot's phone (scripts/boot-arm64.sh) unless one is named
-            let dev = if cli.device.is_some() || std::env::var_os("AGENT_SIM_DEVICE").is_some() {
-                dev()?
+            // whichever of the arm64 boot's phones (scripts/boot-arm64.sh) is free, unless one is named
+            let named = if cli.device.is_some() || std::env::var_os("AGENT_SIM_DEVICE").is_some() {
+                Some(dev()?)
             } else {
-                xctest::default_device()?
+                None
             };
             if only.is_empty() {
                 if let Ok(f) = std::env::var("TESTBRIDGE_TEST_ONLY") {
@@ -309,7 +309,7 @@ fn main() -> Result<()> {
                 out,
                 timeout,
             };
-            std::process::exit(xctest::xctest(&dev, &options)?)
+            std::process::exit(xctest::xctest(named, &options)?)
         }
         Command::Up => cmd::up(&name),
         Command::Erase => cmd::erase(&name),

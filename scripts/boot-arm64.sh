@@ -7,13 +7,22 @@
 #   scripts/boot-arm64.sh [seconds]      (default: until stopped)
 #
 # Env: X86SIM_ROOT (an x86Sim checkout with the runtime fetched; default ~/x86sim), A64_DEVICE (default
-# $X86SIM_ROOT/var/device-a64), A64_JOBS (default: boot-a64.sh's slim list, MIN + UI_SLIM), DPREFIX (Darling prefix,
-# default ~/.darling), X86SIM_METAL (default all: Metal for every process through x86Sim's metalhostd and mtlvk, built
-# for arm64 by scripts/build-mtlvk-arm64.sh; 0 = none, and backboardd then draws nothing). Frames go to simfb's ring
+# $X86SIM_ROOT/var/device-a64), A64_PHONE (<n>: another phone, device-a64-<n> with its own Darling prefix
+# ~/.darling-<n>), A64_JOBS (default: boot-a64.sh's slim list, MIN + UI_SLIM), DPREFIX (Darling prefix, default
+# ~/.darling), X86SIM_METAL (default all: Metal for every process through x86Sim's metalhostd and mtlvk, built for
+# arm64 by scripts/build-mtlvk-arm64.sh; 0 = none, and backboardd then draws nothing). Frames go to simfb's ring
 # (SIMFB_RING in sim.env; x86Sim's cli/libexec/fb2png.py makes a PNG of the newest).
 set -e
 X=${X86SIM_ROOT:-$HOME/x86sim}
 export X86SIM_ROOT=$X X86SIM_PREFIX=${X86SIM_PREFIX:-/usr/local} X86SIM_METAL=${X86SIM_METAL-all}
+# A64_PHONE=<n>: another phone beside the first, for several tests at once (agent-sim xctest takes whichever phone is
+# free): device-a64-<n>, with its own Darling prefix and state (Metal and audio sockets)
+if [ -n "${A64_PHONE:-}" ]; then
+	A64_DEVICE=${A64_DEVICE:-$X/var/device-a64-$A64_PHONE}
+	export DPREFIX=${DPREFIX:-$HOME/.darling-$A64_PHONE}
+	export X86SIM_STATE=${X86SIM_STATE:-$X/var/run-$A64_PHONE}
+	mkdir -p "$X86SIM_STATE"
+fi
 D=${A64_DEVICE:-$X/var/device-a64}
 export X86SIM_DEVICE=$D
 DPREFIX=${DPREFIX:-$HOME/.darling}
