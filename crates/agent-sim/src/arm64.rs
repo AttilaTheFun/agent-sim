@@ -126,6 +126,7 @@ pub fn up(count: usize, timeout: Duration) -> Result<String> {
         }
         let name = dir.file_name().unwrap_or_default().to_string_lossy().to_string();
         let log_path = x.join(format!("var/boot-{name}.log"));
+        std::fs::create_dir_all(x.join("var"))?;
         let log = File::create(&log_path).with_context(|| format!("creating {}", log_path.display()))?;
         let mut cmd = Command::new(&boot);
         cmd.env("X86SIM_ROOT", &x)
