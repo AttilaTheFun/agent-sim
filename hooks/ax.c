@@ -460,7 +460,9 @@ static void start(void) {
 }
 // An idle WebContent process took seconds to run work queued for its main thread (its run loop did not wake for
 // the main dispatch queue), so there a thread looks for a request file (req-<pid>) every 150 ms, puts the work on
-// the main run loop itself and wakes it.
+// the main run loop itself and wakes it. Apps and SpringBoard have the same thread: on arm64 Linux, natively under
+// Darling, SIGUSR2 never reaches the signal source (Linux drops a signal a process ignores, and the source needs it
+// ignored), so the request file is the way in there.
 #include <pthread.h>
 #include <dlfcn.h>
 static void *watch_requests(void *arg) {
@@ -504,6 +506,8 @@ static void added(const struct mach_header *mh, intptr_t slide) {
 	} else if (objc_getClass("UIApplication")) {
 		on = true;
 		start();
+		pthread_t t;
+		if (pthread_create(&t, NULL, watch_requests, NULL) == 0) pthread_detach(t);
 	}
 }
 __attribute__((constructor)) static void init(void) {

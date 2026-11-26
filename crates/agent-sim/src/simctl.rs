@@ -277,8 +277,8 @@ fn spawn(args: &[String]) -> Result<i32> {
     simctl_py(&dev, &py)
 }
 
-/// `io <udid> screenshot [--type=png] [--mask=...] <file>`: the screen as a PNG (the frame ring; the Dynamic Island is
-/// drawn black, as `--mask=black` has it).
+/// `io <udid> screenshot [--type=png] [--mask=black] <file>`: the screen as a PNG (the frame ring; the Dynamic Island
+/// is drawn black by the phone itself).
 fn io(args: &[String]) -> Result<i32> {
     let udid = args.first().ok_or_else(usage)?;
     if args.get(1).map(String::as_str) != Some("screenshot") {
@@ -289,7 +289,12 @@ fn io(args: &[String]) -> Result<i32> {
         .rfind(|a| !a.starts_with('-'))
         .ok_or_else(usage)?;
     let dev = find(udid)?;
-    std::fs::write(file, crate::cmd::screenshot_png(&dev)?).with_context(|| format!("writing {file}"))?;
+    // --mask=black (and alpha, here black too) paints outside the display's rounded corners, as Apple's does
+    let black = args
+        .iter()
+        .any(|a| a == "--mask=black" || a == "--mask=alpha");
+    std::fs::write(file, crate::cmd::screenshot_png_masked(&dev, black)?)
+        .with_context(|| format!("writing {file}"))?;
     println!("Wrote screenshot to: {file}");
     Ok(0)
 }

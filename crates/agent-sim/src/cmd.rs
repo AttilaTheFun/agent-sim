@@ -61,6 +61,45 @@ fn orientation(dev: &Device) -> String {
 
 /// The screen as a PNG, upright as the user sees it: turned with the phone, as Apple's Simulator turns its window.
 pub fn screenshot_png(dev: &Device) -> Result<Vec<u8>> {
+    screenshot_png_masked(dev, false)
+}
+
+/// What `simctl io screenshot --mask=black` paints outside the display's rounded corners on an iPhone 17 (1206 x 2622
+/// pixels), measured from Apple's simulator: per row from the top-left corner, each masked pixel's coverage (0-255);
+/// the other three corners mirror it.
+const IPHONE17_CORNERS: &[u8] = include_bytes!("iphone17-corner-mask.bin");
+
+fn mask_corners(rgb: &mut [u8], w: usize, h: usize) {
+    if (w, h) != (1206, 2622) && (w, h) != (2622, 1206) {
+        return;
+    }
+    let (portrait_w, portrait_h) = (1206, 2622);
+    let rows = u16::from_le_bytes([IPHONE17_CORNERS[0], IPHONE17_CORNERS[1]]) as usize;
+    let mut at = 2;
+    for j in 0..rows {
+        let n = u16::from_le_bytes([IPHONE17_CORNERS[at], IPHONE17_CORNERS[at + 1]]) as usize;
+        let alphas = &IPHONE17_CORNERS[at + 2..at + 2 + n];
+        at += 2 + n;
+        for (i, &a) in alphas.iter().enumerate() {
+            // the four corners of the upright (portrait) frame, then turned with the picture if it is landscape
+            for (x, y) in [
+                (i, j),
+                (portrait_w - 1 - i, j),
+                (i, portrait_h - 1 - j),
+                (portrait_w - 1 - i, portrait_h - 1 - j),
+            ] {
+                let (x, y) = if w == portrait_w { (x, y) } else { (y, portrait_w - 1 - x) };
+                let p = (y * w + x) * 3;
+                for c in &mut rgb[p..p + 3] {
+                    *c = (*c as u32 * (255 - a as u32) / 255) as u8;
+                }
+            }
+        }
+    }
+}
+
+/// The screen as a PNG, with `simctl io --mask=black`'s black outside the display's rounded corners when `black`.
+pub fn screenshot_png_masked(dev: &Device, black: bool) -> Result<Vec<u8>> {
     let mut ring = Ring::new(&dev.ring_path()?);
     let frame = ring
         .latest()
@@ -70,7 +109,10 @@ pub fn screenshot_png(dev: &Device) -> Result<Vec<u8>> {
     for px in frame.bgra.chunks_exact(4) {
         rgb.extend_from_slice(&[px[2], px[1], px[0]]);
     }
-    let (rgb, w, h) = rotate(rgb, w, h, &orientation(dev));
+    let (mut rgb, w, h) = rotate(rgb, w, h, &orientation(dev));
+    if black {
+        mask_corners(&mut rgb, w, h);
+    }
     let mut png_bytes = Vec::new();
     let mut enc = png::Encoder::new(&mut png_bytes, w as u32, h as u32);
     enc.set_color(png::ColorType::Rgb);
@@ -268,6 +310,7 @@ fn insert_text(dev: &Device, text: &str) -> Result<bool> {
         dir.join(format!("cmd-{pid}.txt")),
         format!("insert\n{text}"),
     )?;
+    let _ = std::fs::write(dir.join(format!("req-{pid}")), "0");
     if phone::ask_hook(&dir, linux, pid).is_err() {
         return Ok(false);
     }
@@ -581,6 +624,8 @@ fn springboard(dev: &Device, req: &str) -> Result<String> {
     let Some(&(linux, inner)) = sb.first() else {
         return Err(phone::not_running(dev));
     };
+    // the hook's watcher thread reads cmd.txt on this (the signal does not get through on arm64 Linux)
+    let _ = std::fs::write(dir.join(format!("req-{inner}")), "0");
     phone::ask_hook(&dir, linux, inner).context("SpringBoard is still starting")?;
     let start = Instant::now();
     loop {
