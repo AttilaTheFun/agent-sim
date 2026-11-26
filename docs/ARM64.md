@@ -89,10 +89,12 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   `a3b68f7f…c695` (29 MB).
 - **Driving a phone from outside** (Nimbus' driver): `agent-sim --device <device dir> install <.app|.ipa>`,
   `uninstall`, `launch`, `terminate`, `apps` (x86Sim's in-device helpers underneath) and `screenshot -o out.png` (the
-  frame ring), and `tap <x> <y>` (screen points: a tapped button acts, a tapped field takes focus and brings up the
-  keyboard) and `swipe`, through x86Sim's simhid. An app's first launch can take up to a minute to draw its first
-  frame. Not yet: key presses (`type`) and buttons (`press home`) reach simhid but not the app or SpringBoard, and
-  tapping by element or text needs agent-sim's accessibility hook, which arm64 apps do not load yet.
+  frame ring), `tap <x> <y>` (screen points), `swipe`, `type <text>` (key presses of a hardware keyboard) and
+  `press home|lock|volup|voldown`, through x86Sim's simhid. An app's first launch can take up to a minute to draw its
+  first frame, and typed text can take several seconds to appear. `phones up` attaches each phone's keyboard once
+  before anything is typed: text typed right after a boot's first attach lost its case ("Ada" came out "ADA"). Not
+  yet: tapping by element or text, and typing characters without a key of their own, which need agent-sim's hook in
+  the phone's apps (not loaded on arm64 yet).
 
 ## What does not work yet
 
