@@ -87,9 +87,9 @@ with x86Sim's runner and pass as in Xcode's simulator, with JUnit XML (docs/ARM6
 4. **Done when:** `bazel test //...` of a rules_applecross project in an arm64 container runs its iOS unit tests,
    several test targets in parallel on several phones, and Bazel's result caching works as on a Mac.
 
-Steps 1 and 2 are done (2026-11-26): `bazel test` of XCTestDemo's three targets runs them in the container with the
-results Xcode's simulator gives, with JUnit XML, `--test_filter` and result caching; tests queue for the one phone.
-Step 3 (several phones) is next.
+Steps 1 to 3 are done (2026-11-26): `bazel test` of XCTestDemo's three targets runs them in the container with the
+results Xcode's simulator gives, with JUnit XML, `--test_filter` and result caching, on as many phones as are booted
+(two tested). Step 4 is next.
 
 The plan, in the order it lands. rules_apple's test rules expand the runner's script template with the test bundle
 (`%(test_bundle_path)s`, a `.zip`), the test host (`%(test_host_path)s`, an `.ipa`, or nothing for a logic test),

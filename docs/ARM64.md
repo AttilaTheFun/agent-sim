@@ -61,7 +61,10 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   (`test.outputs`) and the status. `--test_filter=Class/test,...` selects tests, and passing results are cached as on
   a Mac. `tests/apps/XCTestDemo` is wired up: with the phone booted, `cd tests/apps/XCTestDemo && bazel test //...`,
   given a `.bazelrc.user` with `common --distdir=<folder holding Xcode_27.2.xip>` and, where the machine has no gcc,
-  `common --repo_env=CC=clang`. One phone runs one test at a time.
+  `common --repo_env=CC=clang`. A phone runs one test at a time; more phones run more at once: `A64_PHONE=2
+  scripts/boot-arm64.sh` boots a second (`device-a64-2`, its own Darling prefix `~/.darling-2`), `agent-sim xctest`
+  takes whichever is free, and `bazel test --local_test_jobs=2` keeps both busy (XCTestDemo's three targets: 133 s
+  on two phones, about 200 s on one).
 
 ## What does not work yet
 
