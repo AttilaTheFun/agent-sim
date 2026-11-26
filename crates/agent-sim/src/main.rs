@@ -293,7 +293,11 @@ fn main() -> Result<()> {
             };
             if only.is_empty() {
                 if let Ok(f) = std::env::var("TESTBRIDGE_TEST_ONLY") {
-                    only = f.split(',').filter(|t| !t.is_empty()).map(str::to_string).collect();
+                    only = f
+                        .split(',')
+                        .filter(|t| !t.is_empty())
+                        .map(str::to_string)
+                        .collect();
                 }
             }
             let options = xctest::Options {

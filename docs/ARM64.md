@@ -54,6 +54,14 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   executable renamed to `<Bundle>-Runner`, `$(WRAPPEDPRODUCTNAME)` and `$(WRAPPEDPRODUCTBUNDLEIDENTIFIER)` in its
   Info.plist replaced (`<Bundle>-Runner`, `<test bundle id>.xctrunner`), and the `.xctest` put in its `PlugIns`. The
   test runner of M3 (docs/ARM64-ROADMAP.md) will do that itself.
+- **`bazel test`.** rules_apple's `ios_unit_test` and `ios_ui_test` run on the phone with
+  `runner = "@agent_sim_rules//:ios_runner"` (this repository's `bazel/`), which calls `agent-sim xctest` (the
+  command `scripts/setup-arm64.sh` installs): it unpacks the bundles rules_apple built, makes a UI test's runner app,
+  waits for the phone if another test has it, runs them, and hands Bazel the JUnit XML (`test.xml`), the logs
+  (`test.outputs`) and the status. `--test_filter=Class/test,...` selects tests, and passing results are cached as on
+  a Mac. `tests/apps/XCTestDemo` is wired up: with the phone booted, `cd tests/apps/XCTestDemo && bazel test //...`,
+  given a `.bazelrc.user` with `common --distdir=<folder holding Xcode_27.2.xip>` and, where the machine has no gcc,
+  `common --repo_env=CC=clang`. One phone runs one test at a time.
 
 ## What does not work yet
 

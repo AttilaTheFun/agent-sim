@@ -75,12 +75,19 @@ fn take_phone(dev: &Device) -> Result<File> {
     #[allow(unsafe_code)]
     let busy = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0;
     if busy {
-        eprintln!("agent-sim xctest: waiting for {} (another test has it)", dev.dir.display());
+        eprintln!(
+            "agent-sim xctest: waiting for {} (another test has it)",
+            dev.dir.display()
+        );
         // SAFETY: as above, now blocking until the other test lets go.
         #[allow(unsafe_code)]
         let r = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
         if r != 0 {
-            bail!("locking {}: {}", path.display(), std::io::Error::last_os_error());
+            bail!(
+                "locking {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            );
         }
     }
     Ok(f)
@@ -97,7 +104,11 @@ fn unpack(archive: &Path, into: &Path) -> Result<PathBuf> {
         return Ok(archive.to_path_buf());
     }
     std::fs::create_dir_all(into)?;
-    let st = run(Command::new("unzip").arg("-qo").arg(archive).arg("-d").arg(into))?;
+    let st = run(Command::new("unzip")
+        .arg("-qo")
+        .arg(archive)
+        .arg("-d")
+        .arg(into))?;
     if !st.success() {
         bail!("unzip {} failed ({st})", archive.display());
     }
@@ -110,7 +121,9 @@ fn find_bundle(dir: &Path, ext: &str) -> Result<PathBuf> {
         return Ok(dir.to_path_buf());
     }
     for d in [dir.join("Payload"), dir.to_path_buf()] {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         let mut found: Vec<PathBuf> = rd
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.extension() == Some(OsStr::new(ext)))
@@ -143,18 +156,24 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
 /// A UI test bundle's runner app, made as Xcode makes `<Bundle>-Runner.app`: Xcode's XCTRunner.app with its executable
 /// and its Info.plist's `$(WRAPPED...)` placeholders named for the bundle, and the bundle in its PlugIns.
 fn ui_runner(platforms: &Path, bundle: &Path, work: &Path) -> Result<PathBuf> {
-    let template = platforms.join("iPhoneSimulator.platform/Developer/Library/Xcode/Agents/XCTRunner.app");
+    let template =
+        platforms.join("iPhoneSimulator.platform/Developer/Library/Xcode/Agents/XCTRunner.app");
     if !template.is_dir() {
         bail!(
             "no {}: XCTest's platform comes from an Xcode .xip (XCODE_XIP=... scripts/setup-arm64.sh)",
             template.display()
         );
     }
-    let stem = bundle.file_stem().context("test bundle without a name")?.to_string_lossy().to_string();
+    let stem = bundle
+        .file_stem()
+        .context("test bundle without a name")?
+        .to_string_lossy()
+        .to_string();
     let name = format!("{stem}-Runner");
     let runner = work.join(format!("{name}.app"));
     copy_dir(&template, &runner)?;
-    std::fs::rename(runner.join("XCTRunner"), runner.join(&name)).context("naming the runner's executable")?;
+    std::fs::rename(runner.join("XCTRunner"), runner.join(&name))
+        .context("naming the runner's executable")?;
     let info_path = runner.join("Info.plist");
     let mut info: plist::Dictionary =
         plist::from_file(&info_path).with_context(|| format!("reading {}", info_path.display()))?;
@@ -169,7 +188,8 @@ fn ui_runner(platforms: &Path, bundle: &Path, work: &Path) -> Result<PathBuf> {
             *v = plist::Value::String(s);
         }
     }
-    plist::to_file_binary(&info_path, &info).with_context(|| format!("writing {}", info_path.display()))?;
+    plist::to_file_binary(&info_path, &info)
+        .with_context(|| format!("writing {}", info_path.display()))?;
     let plugins = runner.join("PlugIns");
     std::fs::create_dir_all(&plugins)?;
     copy_dir(bundle, &plugins)?;
@@ -193,13 +213,18 @@ pub fn xctest(dev: &Device, o: &Options) -> Result<i32> {
     let x = x86sim_root()?;
     let runner_py = x.join("cli/libexec/xctest.py");
     if !runner_py.is_file() {
-        bail!("no {} (scripts/setup-arm64.sh sets x86Sim up)", runner_py.display());
+        bail!(
+            "no {} (scripts/setup-arm64.sh sets x86Sim up)",
+            runner_py.display()
+        );
     }
     let platforms = x.join("sdks");
     let _phone = take_phone(dev)?;
 
     // inside the device's data directory, which the phone's processes see
-    let work = dev.dir.join(format!("data/tmp/agent-sim-xctest/{}", std::process::id()));
+    let work = dev
+        .dir
+        .join(format!("data/tmp/agent-sim-xctest/{}", std::process::id()));
     if work.exists() {
         std::fs::remove_dir_all(&work)?;
     }
@@ -211,7 +236,9 @@ pub fn xctest(dev: &Device, o: &Options) -> Result<i32> {
     };
 
     let mut cmd = Command::new("python3");
-    cmd.arg(&runner_py).env("X86SIM_ROOT", &x).env("X86SIM_DEVICE", &dev.dir);
+    cmd.arg(&runner_py)
+        .env("X86SIM_ROOT", &x)
+        .env("X86SIM_DEVICE", &dev.dir);
     let mut installed = Vec::new();
     match (o.kind, &app) {
         (Kind::Logic, _) => {
@@ -223,7 +250,10 @@ pub fn xctest(dev: &Device, o: &Options) -> Result<i32> {
         }
         (Kind::Ui, Some(app)) => {
             let runner = ui_runner(&platforms, &bundle, &work)?;
-            cmd.arg("--ui-test-runner").arg(&runner).arg("--app").arg(app);
+            cmd.arg("--ui-test-runner")
+                .arg(&runner)
+                .arg("--app")
+                .arg(app);
             installed.push(bundle_id(app)?);
             installed.push(bundle_id(&runner)?);
         }

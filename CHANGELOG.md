@@ -8,6 +8,8 @@
   translator, through SpringBoard to the home screen, which backboardd draws whole, as it does apps (Settings).
   XCTest logic, app-hosted unit and UI tests run there (x86Sim's `xctest.py`), with XCTest's frameworks from an
   Xcode .xip (`XCODE_XIP`); `tests/apps/XCTestDemo` builds the test bundles on Linux with rules_applecross.
+- `agent-sim xctest` runs a test bundle on the arm64 phone, and `bazel/` (the `agent_sim_rules` module) is a test
+  runner for rules_apple's iOS test rules that calls it: `bazel test` of iOS unit and UI tests in a Linux container.
 - Web pages no longer stay blank, and `open` brings Safari up after it was quit: reading the screen sent SIGUSR2 to
   processes still starting, which ended them; now only processes whose hook is ready are asked.
 - `open` checks that Safari started for a web link and asks again once if it did not.
