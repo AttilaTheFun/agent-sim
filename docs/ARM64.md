@@ -67,11 +67,21 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   on two phones, about 200 s on one). Each phone after XCTestDemo's UI tests takes about 3.7 GB (2.8 GB of its own and
   0.9 GB of shared memory), so a 16 GB container holds three or four. If a phone stops during a test (its Darling
   server gone), the test runs once more on another booted phone; the stopped phone stays down until booted again.
+  `agent-sim phones up N` boots phones 1 to N that do not run and returns once each can run tests (its SpringBoard
+  up for two minutes: about two minutes after boot); `agent-sim phones status` lists them. For bundles whose failures
+  are deliberate, `--expect FILE` (or `--test_env=AGENT_SIM_EXPECT=FILE`) passes a test when every test had the outcome
+  FILE gives it (XCTestDemo's: `tests/apps/XCTestDemo/expected.txt`), so `bazel test //...` there passes.
 
 ## What does not work yet
 
 - **Not yet compared with Apple's simulator.** The home screen's widgets are blank white squares in a first boot,
   and the lock screen, speed and software rendering (`X86SIM_METAL=0`) are not checked yet.
+- **An app crash on a first boot.** In two of about seventeen runs of XCTestDemo's UI tests, both on a phone booted
+  for the first time with a new Darling prefix while another phone ran tests, the app died (SIGSEGV) or did not show
+  its text field in 30 s; on that phone's next boot, ten more runs passed. Not yet caught with a core.
+- **Asking a process for its accessibility tree** over x86Sim's per-process socket
+  (`/tmp/x86sim-0/x86sim-ax-<UDID>-<pid>.sock`) and hanging up before it answers kills it (SIGPIPE): read the whole
+  answer, or leave SpringBoard's alone.
 - **launchd's run times** are negative (`ran for 18446742...ms`): its idea of when a job started is off.
 - **No agent-sim CLI yet** on arm64: `scripts/boot-arm64.sh` boots one phone; `phone.sh`, the pool and the
   pre-translation steps are x86-only.
