@@ -7,10 +7,12 @@
 #
 # A lease brings its phones up with `agent-sim phones up N`.
 FROM docker.io/library/ubuntu:24.04
+LABEL org.opencontainers.image.source=https://github.com/AttilaTheFun/agent-sim
 COPY . /root/agent-sim
-# One layer, so what only the build needs (Darling's build tree, ~20 GB; Rust's caches) never reaches the image
+# One layer, so what only the build needs (Darling's sources and build tree, ~8 GB; Rust's caches) never reaches the
+# image: Darling's prefix records the patches it was built with, which is all setup-arm64.sh checks in a lease
 RUN RUNTIME_BUILD=none DARLING_CHECK=0 /root/agent-sim/scripts/setup-arm64.sh \
-	&& rm -rf /root/darling/build /root/.cargo/registry /root/.cargo/git \
+	&& rm -rf /root/darling /root/.cargo/registry /root/.cargo/git \
 		/root/agent-sim/target/release/build /root/agent-sim/target/release/deps /root/agent-sim/target/release/incremental \
 		/root/x86sim/linux/mtlvk/target/release/build /root/x86sim/linux/mtlvk/target/release/deps \
 		/var/lib/apt/lists/*

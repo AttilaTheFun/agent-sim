@@ -52,35 +52,43 @@ command -v llvm-lipo >/dev/null || ln -sf "$(ls /usr/bin/llvm-lipo-* | sort -V |
 
 log "Darling $(base darling | cut -c1-12) with patches/darling-arm64"
 D=$WORK/darling
-if [ ! -d "$D/.git" ]; then
-	git clone -q https://github.com/darlinghq/darling.git "$D"
-	git -C "$D" checkout -q "$(base darling)"
-	git -C "$D" submodule update -q --init --recursive --jobs 16
-fi
-# ICU's data (and other large files) are Git LFS objects: without git-lfs the checkout holds their pointers
-git lfs install > /dev/null
-git -C "$D" submodule foreach -q --recursive 'git lfs pull > /dev/null 2>&1 || true'
-# The patches applied are recorded by their hash: a checkout with other patches (a CI job on an image made from an
-# older commit) puts the tree back to BASE.txt's commits, applies its own and builds again
 patched=$(cat "$P"/*.patch "$P/BASE.txt" | sha256sum | cut -c1-64)
-if [ "$(cat "$D/.agent-sim-patched" 2>/dev/null)" != "$patched" ]; then
-	git -C "$D" checkout -q -f "$(base darling)"
-	git -C "$D" clean -q -fd -e /build -e /.agent-sim-patched
-	git -C "$D" apply "$P/darling.patch"
-	for sub in xnu darlingserver libkqueue iokitd libplatform libpthread dyld libunwind objc4 sqlite libnetwork; do
-		[ -s "$P/$sub.patch" ] || continue
-		git -C "$D/src/external/$sub" checkout -q -f "$(base "$sub")"
-		git -C "$D/src/external/$sub" clean -q -fd
-		git -C "$D/src/external/$sub" apply "$P/$sub.patch"
-	done
-	echo "$patched" > "$D/.agent-sim-patched"
-fi
-if [ ! -x /usr/local/bin/darling ] || [ "$D/.agent-sim-patched" -nt /usr/local/bin/darling ]; then
-	# twice: Ruby's bundles link against CFNetwork, which the build does not wait for (the second run finishes them)
-	mkdir -p "$D/build"
-	(cd "$D/build" && cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
-		-DTARGET_ARM64=ON > /dev/null &&
-		{ ninja -j "$JOBS" -k 0 || ninja -j "$JOBS"; } && ninja install > /dev/null)
+# Darling installed with these patches (its prefix records them) needs nothing more, not even its sources: the image
+# of Nimbus' ios leases (images/arm64) has no sources
+INSTALLED=/usr/local/libexec/darling/.agent-sim-patched
+if [ -x /usr/local/bin/darling ] && [ "$(cat "$INSTALLED" 2>/dev/null)" = "$patched" ]; then
+	echo "installed, with these patches"
+else
+	if [ ! -d "$D/.git" ]; then
+		git clone -q https://github.com/darlinghq/darling.git "$D"
+		git -C "$D" checkout -q "$(base darling)"
+		git -C "$D" submodule update -q --init --recursive --jobs 16
+	fi
+	# ICU's data (and other large files) are Git LFS objects: without git-lfs the checkout holds their pointers
+	git lfs install > /dev/null
+	git -C "$D" submodule foreach -q --recursive 'git lfs pull > /dev/null 2>&1 || true'
+	# The patches applied are recorded by their hash: a checkout with other patches (a lease of an image made from an
+	# older commit) puts the tree back to BASE.txt's commits, applies its own and builds again
+	if [ "$(cat "$D/.agent-sim-patched" 2>/dev/null)" != "$patched" ]; then
+		git -C "$D" checkout -q -f "$(base darling)"
+		git -C "$D" clean -q -fd -e /build -e /.agent-sim-patched
+		git -C "$D" apply "$P/darling.patch"
+		for sub in xnu darlingserver libkqueue iokitd libplatform libpthread dyld libunwind objc4 sqlite libnetwork; do
+			[ -s "$P/$sub.patch" ] || continue
+			git -C "$D/src/external/$sub" checkout -q -f "$(base "$sub")"
+			git -C "$D/src/external/$sub" clean -q -fd
+			git -C "$D/src/external/$sub" apply "$P/$sub.patch"
+		done
+		echo "$patched" > "$D/.agent-sim-patched"
+	fi
+	if [ ! -x /usr/local/bin/darling ] || [ "$D/.agent-sim-patched" -nt /usr/local/bin/darling ]; then
+		# twice: Ruby's bundles link against CFNetwork, which the build does not wait for (the second run finishes them)
+		mkdir -p "$D/build"
+		(cd "$D/build" && cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+			-DTARGET_ARM64=ON > /dev/null &&
+			{ ninja -j "$JOBS" -k 0 || ninja -j "$JOBS"; } && ninja install > /dev/null)
+	fi
+	echo "$patched" > "$INSTALLED"
 fi
 # (not while building an image: its builder may not allow the namespaces Darling needs; the phones' boot checks it)
 [ "${DARLING_CHECK:-1}" = 0 ] || darling shell uname -m > /dev/null || die "darling shell does not start"
