@@ -80,6 +80,13 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   name them; `boot-arm64.sh` puts an overlay over the runtime at `$X86SIM_ROOT/runtimes/<runtime>`
   (x86Sim writes each device's launch angels into the runtime's LaunchAngels directory, the only place launchd_sim
   takes angels from), and Darling keeps its rewritten-instruction lists in each phone's prefix.
+- **Apple's files as archives** (Bazel dependencies in Nimbus' storage, by SHA-256): reproducible `.tar.zst`s of the
+  runtime as x86Sim's `runtime-fetch.py fetch 24B8117` leaves it (its `RuntimeRoot` and `extracted/`, not the
+  downloaded `bundle/`), top directory `ios-27.2-24B8117-arm64/`, and of `scripts/xip-platform.py`'s
+  `iPhoneSimulator.platform/`: `tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --format=posix
+  --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime -cf - <dirs> | zstd -10 -T0` (zstd 1.5's output
+  does not depend on its thread count). For 24B8117 and Xcode 27.2 (27B52): sha256 `75153dce…95b4` (7.8 GB) and
+  `a3b68f7f…c695` (29 MB).
 - **Driving a phone from outside** (Nimbus' driver): `agent-sim --device <device dir> install <.app|.ipa>`,
   `uninstall`, `launch`, `terminate`, `apps` (x86Sim's in-device helpers underneath) and `screenshot -o out.png` (the
   frame ring). An app's first launch can take up to a minute to draw its first frame. Tap, swipe and type are next.
