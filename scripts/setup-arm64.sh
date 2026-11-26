@@ -116,8 +116,13 @@ if [ -n "${XCODE_XIP:-}" ]; then
 		python3 -I "$HERE/xip-platform.py" "$XCODE_XIP" "$X/sdks" iPhoneSimulator
 fi
 
-log "agent-sim's command (its test runner for \`bazel test\`: bazel/)"
+log "agent-sim's command (its test runner for \`bazel test\`: bazel/) and Bazel"
 (. "$HOME/.cargo/env" && cd "$HERE/.." && cargo build -q --release -p agent-sim)
 install -m755 "$HERE/../target/release/agent-sim" /usr/local/bin/agent-sim
+# Bazel (bazelisk, which fetches the version a workspace's .bazelversion names), for `bazel test` of iOS test targets
+command -v bazel > /dev/null || {
+	curl -fsSL -o /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-arm64
+	chmod 755 /usr/local/bin/bazel
+}
 
 log "Done: boot a phone with X86SIM_ROOT=$X $HERE/boot-arm64.sh"
