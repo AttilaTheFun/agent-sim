@@ -75,7 +75,13 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   `RUNTIME_BUILD=none` and drops Darling's sources and build tree; Darling's prefix records the patches it was built
   with, so `setup-arm64.sh` in a lease skips Darling and only adds what is missing. Apple's runtime
   (`$X86SIM_ROOT/runtimes/ios-27.2-24B8117-arm64`) and XCTest's platform (`$X86SIM_ROOT/sdks/iPhoneSimulator.platform`)
-  are mounted into the lease, never in the image.
+  are mounted into the lease, never in the image. The runtime may be read-only: mounted at
+  `$X86SIM_ROOT/runtimes-ro/<runtime>`, `boot-arm64.sh` puts an overlay over it at `$X86SIM_ROOT/runtimes/<runtime>`
+  (x86Sim writes each device's launch angels into the runtime's LaunchAngels directory, the only place launchd_sim
+  takes angels from), and Darling keeps its rewritten-instruction lists in each phone's prefix.
+- **Driving a phone from outside** (Nimbus' driver): `agent-sim --device <device dir> install <.app|.ipa>`,
+  `uninstall`, `launch`, `terminate`, `apps` (x86Sim's in-device helpers underneath) and `screenshot -o out.png` (the
+  frame ring). An app's first launch can take up to a minute to draw its first frame. Tap, swipe and type are next.
 
 ## What does not work yet
 

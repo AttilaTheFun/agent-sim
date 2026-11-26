@@ -24,7 +24,7 @@ index defb09f..67ddd77 100644
  #define DYLD_TSD_VENEER_WORDS      5
  #define DYLD_TSD_SLOT_MIN          16u
 diff --git a/src/dyld2.cpp b/src/dyld2.cpp
-index 7723026..80c1031 100644
+index 7723026..96b53e0 100644
 --- a/src/dyld2.cpp
 +++ b/src/dyld2.cpp
 @@ -282,7 +282,9 @@ int amfi_check_dyld_policy_self(uint64_t input_flags, uint64_t* output_flags)
@@ -38,7 +38,7 @@ index 7723026..80c1031 100644
  
  	(void)input_flags;
  	*output_flags = allowEverything;
-@@ -5681,14 +5683,245 @@ static uint64_t        kdebug_trace_string(uint32_t debugid, uint64_t str_id, co
+@@ -5681,14 +5683,260 @@ static uint64_t        kdebug_trace_string(uint32_t debugid, uint64_t str_id, co
  //int             (*amfi_check_dyld_policy_self)(uint64_t input_flags, uint64_t* output_flags);
  #endif
  
@@ -53,7 +53,9 @@ index 7723026..80c1031 100644
 +// maps the cache itself, through this helper, so each executable mapping of a cache file gets those reads rewritten
 +// as dyld3 does for a private macOS cache (translateDarlingCacheTSD): a branch to a veneer that loads the base from
 +// the native TLS slot libsystem_kernel fills, else the TSD trap. Only the reads are visited: their file offsets are
-+// kept in "<cache>.darling-sysregs" (one hex offset per line), written by the first process that maps the cache.
++// kept in the Darling prefix, /private/var/db/darling-sysregs/<cache name>-<size>-<mtime> (one hex offset per line),
++// written by the prefix's first process that maps the cache: not beside the cache, which may be on a read-only volume
++// shared by many phones.
 +// System counter reads (JavaScriptCore, VFX) become the counter trap: Darling's mach_absolute_time counts
 +// nanoseconds, not the 24 MHz counter (tsd_trap.h).
 +// dyld cannot use snprintf (its libc's needs locale state): lowercase hex of `value`, no prefix; returns the length
@@ -70,10 +72,23 @@ index 7723026..80c1031 100644
 +static void darlingSimCacheTSDSites(int fd, const char* cachePath, off_t fileOffset, size_t size,
 +									const uint8_t* mapped, void (^site)(off_t))
 +{
-+	char sitesPath[PATH_MAX];
-+	if ( strlcpy(sitesPath, cachePath, sizeof(sitesPath)) >= sizeof(sitesPath)
-+		|| strlcat(sitesPath, ".darling-sysregs", sizeof(sitesPath)) >= sizeof(sitesPath) )
++	struct stat cacheStat;
++	if ( ::fstat(fd, &cacheStat) != 0 )
 +		return;
++	const char* cacheName = strrchr(cachePath, '/');
++	cacheName = cacheName ? cacheName + 1 : cachePath;
++	char sitesPath[PATH_MAX];
++	strlcpy(sitesPath, "/private/var/db/darling-sysregs", sizeof(sitesPath));
++	::mkdir(sitesPath, 0755);
++	strlcat(sitesPath, "/", sizeof(sitesPath));
++	size_t n = strlcat(sitesPath, cacheName, sizeof(sitesPath));
++	if ( n + 2 * 17 >= sizeof(sitesPath) )
++		return;
++	sitesPath[n++] = '-';
++	n += darlingHex(sitesPath + n, (unsigned long long)cacheStat.st_size);
++	sitesPath[n++] = '-';
++	n += darlingHex(sitesPath + n, (unsigned long long)cacheStat.st_mtime);
++	sitesPath[n] = '\0';
 +	int sfd = ::open(sitesPath, O_RDONLY | O_CLOEXEC);
 +	if ( sfd >= 0 ) {
 +		struct stat st;
@@ -285,7 +300,7 @@ index 7723026..80c1031 100644
  		&munmap, 
  		&madvise,
  		&stat, 
-@@ -5757,10 +5990,94 @@ static const SyscallHelpers sSysCalls = {
+@@ -5757,10 +6005,94 @@ static const SyscallHelpers sSysCalls = {
  		&fstat,
  		&vm_copy,
  		// Added in version 14
@@ -381,7 +396,7 @@ index 7723026..80c1031 100644
  static const char* useSimulatorDyld(int fd, const macho_header* mainExecutableMH, const char* dyldPath,
  								int argc, const char* argv[], const char* envp[], const char* apple[],
  								uintptr_t* startGlue, uintptr_t* mainAddr)
-@@ -5932,6 +6249,38 @@ static const char* useSimulatorDyld(int fd, const macho_header* mainExecutableMH
+@@ -5932,6 +6264,38 @@ static const char* useSimulatorDyld(int fd, const macho_header* mainExecutableMH
  	}
  	close(fd);
  
@@ -420,7 +435,7 @@ index 7723026..80c1031 100644
  	// Walk newly mapped dyld_sim load commands to find entry point
  	uintptr_t entry = 0;
  	bool unusedUsesCRT = false;
-@@ -6812,6 +7161,15 @@ _main(const macho_header* mainExecutableMH, uintptr_t mainExecutableSlide,
+@@ -6812,6 +7176,15 @@ _main(const macho_header* mainExecutableMH, uintptr_t mainExecutableSlide,
  		}
  	}
  
