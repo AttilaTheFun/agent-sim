@@ -111,6 +111,10 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   Info.plist does not help: SpringBoard then fails when it registers some of them itself, later. The ways out are
   listeners for the missing services (from agent-sim's hooks) or a shorter deadline. `X86SIM_OSLOG=SpringBoard,backboardd
   X86SIM_OSLOG_DIR=/Volumes/SystemRoot/<dir>` on the boot shows it.
+- **A test chosen with `--only-testing` (or `bazel test --test_filter`) runs twice** in a UI test bundle: x86Sim's
+  `xctest.py` puts each chosen method in the run list in both its Objective-C and its Swift form
+  (`test_identifiers`), and XCTest runs both. Keeping only the Swift form in the run list fixed it in a lease;
+  agent-sim's arm64 setup does not patch x86Sim yet, so the fix waits for that.
 - **Not yet compared with Apple's simulator.** The home screen's widgets are blank white squares in a first boot,
   and the lock screen, speed and software rendering (`X86SIM_METAL=0`) are not checked yet.
 - **A launchd_sim crash on a first boot**, once, in a lease of the image (SIGSEGV, a new Darling prefix); the same
