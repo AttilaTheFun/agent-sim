@@ -35,6 +35,9 @@ if [ -z "${A64_JOBS:-}" ]; then
 	)
 	# x86Sim's in-device helper for simctl's commands (cli/libexec/simctl.py launch/listapps/..., openurl)
 	A64_JOBS="$A64_JOBS com.x86sim.openurl=$X/host/openurl/arm64/openurl"
+	# x86Sim's xctest feature (cli/libexec/arm64/features-def.json): testmanagerd and the automation-mode jobs, for UI
+	# test runners. launchd_sim starts them on demand, so they cost nothing until a UI test runs
+	A64_JOBS="$A64_JOBS com.apple.testmanagerd com.apple.dt.automationmode-writer com.apple.dt.AutomationModeUI"
 fi
 # Metal: this boot's mtlvk (Vulkan; Mesa's lavapipe without a GPU) on its own socket, as boot-a64.sh starts it
 ST=${X86SIM_STATE:-$X/var/run}
@@ -66,6 +69,17 @@ if [ "${X86SIM_AUDIO_SOCKET:-}" != none ]; then
 		> "$ST/simaudio.log" 2>&1 < /dev/null & echo $! > "$ST/simaudio.pid")
 fi
 python3 -I "$X/cli/libexec/mksimdevice.py" "$D" $A64_JOBS > /dev/null
+# App accessibility on, as Accessibility Inspector turns it on in Apple's simulator (and setup-vm.sh does on x86-64):
+# without it a UI test runner waits for accessibility to load and gives up ("Timed out while loading Accessibility")
+python3 -I - "$D/data/Library/Preferences/com.apple.Accessibility.plist" <<-'PY'
+import os, plistlib, sys
+p = sys.argv[1]
+d = plistlib.load(open(p, "rb")) if os.path.exists(p) else {}
+if not (d.get("ApplicationAccessibilityEnabled") and d.get("AccessibilityEnabled")):
+    d.update(ApplicationAccessibilityEnabled=True, AccessibilityEnabled=True)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    plistlib.dump(d, open(p, "wb"), fmt=plistlib.FMT_BINARY)
+PY
 
 UDID=$(sed -n 's/^SIMULATOR_UDID=//p' "$D/sim.env")
 LOG=$DPREFIX/private/var/tmp/com.apple.CoreSimulator.SimDevice.$UDID/launchd.log

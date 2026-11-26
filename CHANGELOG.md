@@ -6,8 +6,8 @@
   `patches/darling-arm64` (x86Sim's Darling changes merged with Darling's arm64 host support, and the fixes arm64
   needed) and x86Sim's Metal stand-in for arm64; `scripts/boot-arm64.sh` boots the iOS 27.2 runtime with no
   translator, through SpringBoard to the home screen, which backboardd draws whole, as it does apps (Settings).
-  XCTest logic and app-hosted unit tests run there (x86Sim's `xctest.py`), with XCTest's frameworks from an Xcode
-  .xip (`XCODE_XIP`); `tests/apps/XCTestDemo` builds the test bundles on Linux with rules_applecross.
+  XCTest logic, app-hosted unit and UI tests run there (x86Sim's `xctest.py`), with XCTest's frameworks from an
+  Xcode .xip (`XCODE_XIP`); `tests/apps/XCTestDemo` builds the test bundles on Linux with rules_applecross.
 - Web pages no longer stay blank, and `open` brings Safari up after it was quit: reading the screen sent SIGUSR2 to
   processes still starting, which ended them; now only processes whose hook is ready are asked.
 - `open` checks that Safari started for a web link and asks again once if it did not.

@@ -30,8 +30,8 @@ Reproducible from scratch with `scripts/setup-arm64.sh`.
 
 The home screen and apps draw (Settings, for one), since a fix to Darling's `mach_vm_region` for arm64's address
 space; widgets, the lock screen and speed are not checked yet. Apple's code that reads the system counter gets
-Darling's clock (M1.1). XCTest logic and app-hosted unit tests run (M2). No UI tests, agent CLI or Bazel integration
-yet.
+Darling's clock (M1.1). XCTest logic and app-hosted unit tests run (M2), and so do XCTestDemo's UI tests (M4). No
+agent CLI or Bazel integration yet.
 
 Useful already: x86Sim's XCTest runner (`cli/libexec/xctest.py`) covers logic tests (the `xctest` tool), app-hosted
 unit tests (`libXCTestBundleInject`) and XCUITest (testmanagerd and XCTRunner), from an `.xctestrun` or explicit
@@ -88,6 +88,9 @@ with x86Sim's runner and pass as in Xcode's simulator, with JUnit XML (docs/ARM6
    several test targets in parallel on several phones, and Bazel's result caching works as on a Mac.
 
 ### M4. UI tests
+
+Started (2026-11-25): XCTestDemo's UI tests, built on Linux by rules_applecross, pass in a container (docs/ARM64.md).
+Screenshots, the held status bar and a real app's suite are still to do.
 
 1. XCUITest: testmanagerd in the device (x86Sim's `xctest` feature), XCTRunner, the app launched and driven
    through simhid. Queries go through accessibility, so most UI tests should run once M2 works; screenshots

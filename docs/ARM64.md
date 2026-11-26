@@ -45,6 +45,15 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   bundles, built on Linux by rules_applecross (`tests/apps/XCTestDemo`), give the results they give in Xcode's
   simulator: every test passes except the deliberate failures, which fail with their file and line, and the skipped
   one, about 4 s for the logic bundle and 17 s for the hosted one (with the app's install) on a booted phone.
+- **UI tests (XCUITest).** `xctest.py --ui-test-runner R.app --app A.app`: the runner launches the app through
+  testmanagerd and drives it (finding elements through accessibility, tapping, typing). XCTestDemo's UI bundle passes
+  as in Xcode's simulator (about 150 s for three tests, with the installs). `boot-arm64.sh` loads testmanagerd and the
+  automation-mode jobs (on demand, as x86Sim's xctest feature does) and turns app accessibility on, as Accessibility
+  Inspector does. rules_applecross builds no runner app; one is made as Xcode makes it: Xcode's
+  `iPhoneSimulator.platform/Developer/Library/Xcode/Agents/XCTRunner.app` copied as `<Bundle>-Runner.app`, its
+  executable renamed to `<Bundle>-Runner`, `$(WRAPPEDPRODUCTNAME)` and `$(WRAPPEDPRODUCTBUNDLEIDENTIFIER)` in its
+  Info.plist replaced (`<Bundle>-Runner`, `<test bundle id>.xctrunner`), and the `.xctest` put in its `PlugIns`. The
+  test runner of M3 (docs/ARM64-ROADMAP.md) will do that itself.
 
 ## What does not work yet
 
