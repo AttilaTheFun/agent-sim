@@ -128,6 +128,11 @@ impl Hid {
         ))
     }
 
+    /// One key (a HID keyboard usage, page 7) down or up.
+    pub fn key(&mut self, usage: u8, down: bool) -> Result<()> {
+        self.send(&format!("key {} {usage}", if down { "down" } else { "up" }))
+    }
+
     /// Types `s` key by key. Keys pressed back to back were dropped (a web field kept one character of
     /// seventeen, a search field five of nine): each key is held and followed by a pause, as a fast typist's are.
     pub fn text(&mut self, s: &str) -> Result<()> {

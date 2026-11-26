@@ -156,6 +156,7 @@ pub fn up(count: usize, timeout: Duration) -> Result<String> {
             let secs = udid(&dev).and_then(|u| springboard_secs(&u)).unwrap_or(0);
             if up && secs >= READY_SECS {
                 ready[n - 1] = true;
+                warm_keyboard(&dev);
                 eprintln!(
                     "agent-sim phones: {} ready after {} s",
                     dir.file_name().unwrap_or_default().to_string_lossy(),
@@ -179,6 +180,15 @@ pub fn up(count: usize, timeout: Duration) -> Result<String> {
         }
         std::thread::sleep(Duration::from_secs(5));
     }
+}
+
+/// Attaches the phone's keyboard once, with a Shift press, before anything is typed: the first attach of a boot switches
+/// UIKit into hardware-keyboard mode cold, and text typed right after it lost its case ("Ada" became "ADA").
+fn warm_keyboard(dev: &Device) {
+    let mut h = crate::input::Hid::new(dev.hid_socket());
+    let _ = h.key(225, true);
+    std::thread::sleep(Duration::from_millis(30));
+    let _ = h.key(225, false);
 }
 
 /// The phones that run, each with how long its SpringBoard has been up.
