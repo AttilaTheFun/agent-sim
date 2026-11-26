@@ -156,6 +156,11 @@ tested on demand in a lease with XCTestDemo and `--expect`.
 3. Runtime updates: each new iOS 27.x (and later 28) runtime gets a smoke boot and XCTestDemo run before CI
    switches to it.
 
+### macOS apps
+
+Next after Nimbus' `ios` platform: macOS's own userland under Darling, from Apple's restore image, for headless macOS
+XCTest and later AppKit and SwiftUI UI tests: docs/MACOS-DARLING.md (milestones D1 to D6, and what D1 has shown).
+
 ### M7. Upstream and maintenance
 
 The general Darling fixes (the `/proc/<pid>/mem` fallback, libnetwork on arm64, XNU's `apple[]` strings, host-page
