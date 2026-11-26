@@ -130,7 +130,10 @@ fn list(args: &[String]) -> Result<i32> {
                 "name": "iOS 27.2", "isAvailable": runtime_available()?, "supportedDeviceTypes": types,
             });
             if json {
-                println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "runtimes": [rt] }))?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({ "runtimes": [rt] }))?
+                );
             } else {
                 println!("== Runtimes ==\niOS 27.2 (27.2 - 24B8117) - {RUNTIME_ID}");
             }
@@ -153,7 +156,9 @@ fn list(args: &[String]) -> Result<i32> {
             if json {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({ "devices": { RUNTIME_ID: devices } }))?
+                    serde_json::to_string_pretty(
+                        &serde_json::json!({ "devices": { RUNTIME_ID: devices } })
+                    )?
                 );
             } else {
                 println!("== Devices ==\n-- iOS 27.2 --");
@@ -202,8 +207,7 @@ fn create(args: &[String]) -> Result<i32> {
 fn remove(dev: &Device) -> Result<()> {
     let n = number(dev)?;
     arm64::stop(n)?;
-    std::thread::sleep(Duration::from_millis(500));
-    let home = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
+    let home = arm64::home()?;
     let prefix = if n == 1 {
         home.join(".darling")
     } else {
@@ -358,8 +362,10 @@ fn ui(args: &[String]) -> Result<i32> {
     Ok(0)
 }
 
-/// The time simctl's `--time` shows: an ISO 8601 date as its hour and minute ("2007-01-09T09:41:00.000-05:00" is
-/// 9:41), anything else as it is.
+/// The time simctl's `--time` shows: an ISO 8601 date as its hour and minute on a 12-hour clock, as Apple's simulator
+/// draws it ("2007-01-09T09:41:00.000-05:00" is 9:41), anything else as it is. Apple's is the date formatter's "9:41 AM"
+/// without the "AM", so the narrow no-break space before it (U+202F) stays, and the time is drawn 3 px further left
+/// than a bare "9:41".
 fn shown_time(t: &str) -> String {
     let Some((_, clock)) = t.split_once('T') else {
         return t.to_string();
@@ -369,14 +375,28 @@ fn shown_time(t: &str) -> String {
         parts.next().and_then(|h| h.parse::<u32>().ok()),
         parts.next().and_then(|m| m.get(..2)),
     ) {
-        (Some(h), Some(m)) => format!("{h}:{m}"),
+        (Some(h), Some(m)) if h < 24 => {
+            format!("{}:{m}\u{202F}", if h % 12 == 0 { 12 } else { h % 12 })
+        }
         _ => t.to_string(),
     }
 }
 
-/// `status_bar <udid> override [--time T] [--batteryLevel N] [--batteryState charging|charged|discharging] ...` or
-/// `status_bar <udid> clear`, through agent-sim's hook in SpringBoard (the time and the battery; the network items are
-/// the simulator's own, Wi-Fi at full).
+/// A network's mode as StatusKit numbers its status (hooks/ax.c): active, searching, failed, notSupported.
+fn network_status(mode: &str) -> Option<u8> {
+    match mode {
+        "active" => Some(5),
+        "searching" => Some(3),
+        "failed" => Some(2),
+        "notSupported" => Some(0),
+        _ => None,
+    }
+}
+
+/// `status_bar <udid> override [--time T] [--batteryLevel N] [--batteryState charging|charged|discharging]
+/// [--cellularMode M] [--cellularBars N] [--operatorName S] [--wifiMode M] [--wifiBars N] ...` or `status_bar <udid>
+/// clear`, through agent-sim's hook in SpringBoard. `--dataNetwork` is taken as `wifi` (no data network's name beside
+/// the cellular bars) whatever it says.
 fn status_bar(args: &[String]) -> Result<i32> {
     let (Some(udid), Some(what)) = (args.first(), args.get(1)) else {
         return Err(usage());
@@ -389,21 +409,43 @@ fn status_bar(args: &[String]) -> Result<i32> {
     if what != "override" {
         bail!("simctl status_bar: override, clear");
     }
-    let (mut time, mut battery, mut charging) = (None, None, false);
+    let mut items = Vec::new();
+    let (mut cellular_bars, mut cellular_mode, mut wifi_bars, mut wifi_mode) =
+        (None, None, None, None);
     let mut it = args[2..].iter();
     while let Some(flag) = it.next() {
         let value = it.next().map(String::as_str).unwrap_or("");
         match flag.as_str() {
-            "--time" => time = Some(shown_time(value)),
-            "--batteryLevel" => battery = value.parse::<u8>().ok(),
-            "--batteryState" => charging = value == "charging",
+            "--time" => items.push(format!("time={}", shown_time(value))),
+            "--batteryLevel" => {
+                if let Ok(n) = value.parse::<u8>() {
+                    items.push(format!("battery={}", n.min(100)));
+                }
+            }
+            "--batteryState" => match value {
+                "discharging" => items.push("batteryState=0".into()),
+                "charging" => items.push("batteryState=1".into()),
+                "charged" => items.push("batteryState=2".into()),
+                _ => bail!("simctl status_bar: --batteryState charging, charged or discharging"),
+            },
+            "--operatorName" => items.push(format!("operator={value}")),
+            "--cellularBars" => cellular_bars = value.parse::<u8>().ok(),
+            "--cellularMode" => cellular_mode = network_status(value),
+            "--wifiBars" => wifi_bars = value.parse::<u8>().ok(),
+            "--wifiMode" => wifi_mode = network_status(value),
             _ => {}
         }
     }
-    println!(
-        "{}",
-        crate::cmd::status_bar(&dev, time.as_deref(), battery, charging, false)?
-    );
+    // a mode alone shows full bars, as Apple's simulator does
+    if cellular_bars.is_some() || cellular_mode.is_some() {
+        items.push(format!("cellular={}", cellular_bars.unwrap_or(4).min(4)));
+        items.push(format!("cellularStatus={}", cellular_mode.unwrap_or(5)));
+    }
+    if wifi_bars.is_some() || wifi_mode.is_some() {
+        items.push(format!("wifi={}", wifi_bars.unwrap_or(3).min(3)));
+        items.push(format!("wifiStatus={}", wifi_mode.unwrap_or(5)));
+    }
+    println!("{}", crate::cmd::status_bar_items(&dev, &items)?);
     Ok(0)
 }
 
@@ -475,5 +517,25 @@ pub fn run(args: &[String]) -> Result<i32> {
         "ui" => ui(rest),
         "status_bar" => status_bar(rest),
         _ => Err(usage()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shown_time_is_apples_12_hour_time() {
+        assert_eq!(shown_time("2007-01-09T09:41:00.000+00:00"), "9:41\u{202F}");
+        assert_eq!(shown_time("2007-01-09T13:05:00Z"), "1:05\u{202F}");
+        assert_eq!(shown_time("2007-01-09T00:30:00Z"), "12:30\u{202F}");
+        assert_eq!(shown_time("9:41"), "9:41");
+    }
+
+    #[test]
+    fn network_modes_are_statuskit_statuses() {
+        assert_eq!(network_status("active"), Some(5));
+        assert_eq!(network_status("notSupported"), Some(0));
+        assert_eq!(network_status("on"), None);
     }
 }

@@ -88,7 +88,11 @@ fn mask_corners(rgb: &mut [u8], w: usize, h: usize) {
                 (i, portrait_h - 1 - j),
                 (portrait_w - 1 - i, portrait_h - 1 - j),
             ] {
-                let (x, y) = if w == portrait_w { (x, y) } else { (y, portrait_w - 1 - x) };
+                let (x, y) = if w == portrait_w {
+                    (x, y)
+                } else {
+                    (y, portrait_w - 1 - x)
+                };
                 let p = (y * w + x) * 3;
                 for c in &mut rgb[p..p + 3] {
                     *c = (*c as u32 * (255 - a as u32) / 255) as u8;
@@ -696,16 +700,23 @@ pub fn status_bar(
         springboard(dev, "statusbar-clear")?;
         return Ok("status bar back to normal".into());
     }
-    let mut req = String::from("statusbar\n");
+    let mut items = Vec::new();
     if let Some(t) = time {
-        req.push_str(&format!("time={t}\n"));
+        items.push(format!("time={t}"));
     }
     if let Some(b) = battery {
-        req.push_str(&format!(
-            "battery={}\ncharging={}\n",
-            b.min(100),
-            charging as u8
-        ));
+        items.push(format!("battery={}", b.min(100)));
+        items.push(format!("charging={}", charging as u8));
+    }
+    status_bar_items(dev, &items)
+}
+
+/// Overrides status bar items given as the hook's `key=value` lines (hooks/ax.c, `statusbar`).
+pub fn status_bar_items(dev: &Device, items: &[String]) -> Result<String> {
+    let mut req = String::from("statusbar\n");
+    for i in items {
+        req.push_str(&i.replace('\n', " "));
+        req.push('\n');
     }
     let r = springboard(dev, &req)?;
     if r != "ok" {

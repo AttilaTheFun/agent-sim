@@ -11,13 +11,50 @@ use std::time::{Duration, Instant};
 /// about two minutes after SpringBoard starts, and a SpringBoard that keeps restarting never gets there.
 const READY_SECS: u64 = 120;
 
+/// The account's home directory, where the phones' Darling prefixes are: the password database's, not `$HOME`, which
+/// `bazel test` points at a directory of its own.
+pub fn home() -> Result<PathBuf> {
+    // SAFETY: getpwuid's record is read at once, before any other call could replace it
+    #[allow(unsafe_code)]
+    unsafe {
+        let pw = libc::getpwuid(libc::getuid());
+        if !pw.is_null() && !(*pw).pw_dir.is_null() {
+            let dir = std::ffi::CStr::from_ptr((*pw).pw_dir)
+                .to_string_lossy()
+                .into_owned();
+            if !dir.is_empty() {
+                return Ok(PathBuf::from(dir));
+            }
+        }
+    }
+    Ok(PathBuf::from(
+        std::env::var_os("HOME").context("HOME is not set")?,
+    ))
+}
+
 /// x86Sim's checkout the arm64 phone runs from: `$X86SIM_ROOT`, else `~/x86sim` (scripts/setup-arm64.sh).
 pub fn x86sim_root() -> Result<PathBuf> {
     if let Some(d) = std::env::var_os("X86SIM_ROOT") {
         return Ok(PathBuf::from(d));
     }
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home).join("x86sim"))
+    Ok(home()?.join("x86sim"))
+}
+
+/// The pid file of the boot script starting a phone (scripts/boot-arm64.sh, which becomes the phone's `darling shell`
+/// and runs until the phone stops).
+fn boot_pid_file(x: &Path, name: &str) -> PathBuf {
+    x.join(format!("var/boot-{name}.pid"))
+}
+
+/// The boot script's process for a phone, while it runs.
+fn boot_pid(x: &Path, name: &str) -> Option<u32> {
+    let pid: u32 = std::fs::read_to_string(boot_pid_file(x, name))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    let cmd = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    (contains(&cmd, b"boot-arm64.sh") || contains(&cmd, b"darling")).then_some(pid)
 }
 
 /// The arm64 phones that run (scripts/boot-arm64.sh: `device-a64`, and `device-a64-<n>` for A64_PHONE=<n>): those
@@ -134,12 +171,23 @@ pub fn start(n: usize) -> Result<()> {
     if !boot.is_file() {
         bail!("no {}", boot.display());
     }
-    let name = dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let name = dir
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    // still booting (`simctl boot`, then `simctl bootstatus -b`): one boot at a time, or the second finds the first's
+    // darlingserver and gives up
+    if boot_pid(&x, &name).is_some() {
+        return Ok(());
+    }
     std::fs::create_dir_all(x.join("var"))?;
     let log_path = x.join(format!("var/boot-{name}.log"));
-    let log = File::create(&log_path).with_context(|| format!("creating {}", log_path.display()))?;
+    let log =
+        File::create(&log_path).with_context(|| format!("creating {}", log_path.display()))?;
     let mut cmd = Command::new(&boot);
     cmd.env("X86SIM_ROOT", &x)
+        .env("HOME", home()?)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);
@@ -148,9 +196,14 @@ pub fn start(n: usize) -> Result<()> {
     }
     // a process group of its own: the phone outlives this command
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    cmd.spawn()
+    let child = cmd
+        .spawn()
         .with_context(|| format!("starting {}", boot.display()))?;
-    eprintln!("agent-sim phones: booting {name} (log: {})", log_path.display());
+    std::fs::write(boot_pid_file(&x, &name), child.id().to_string())?;
+    eprintln!(
+        "agent-sim phones: booting {name} (log: {})",
+        log_path.display()
+    );
     Ok(())
 }
 
@@ -205,7 +258,7 @@ pub fn wait_ready(ns: &[usize], timeout: Duration) -> Result<()> {
 /// boot started.
 pub fn stop(n: usize) -> Result<()> {
     let x = x86sim_root()?;
-    let home = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
+    let home = home()?;
     let prefix = if n == 1 {
         home.join(".darling")
     } else {
@@ -218,21 +271,49 @@ pub fn stop(n: usize) -> Result<()> {
     };
     let server = format!("darlingserver {} ", prefix.display());
     let state = format!("{}/", state.display());
-    for e in std::fs::read_dir("/proc")?.flatten() {
-        let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else {
-            continue;
+    let dir = device_dir(&x, n);
+    let name = dir
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    if let Some(pid) = boot_pid(&x, &name) {
+        // the script's process group: the script and what it started outside Darling
+        // SAFETY: kill(2) with a process group we started; no memory is shared.
+        #[allow(unsafe_code)]
+        unsafe {
+            libc::kill(-(pid as libc::pid_t), libc::SIGKILL)
         };
-        let Ok(c) = std::fs::read(e.path().join("cmdline")) else {
-            continue;
-        };
-        let cmd = String::from_utf8_lossy(&c).replace('\0', " ");
-        let ours = cmd.starts_with(&server)
-            || ((cmd.contains("mtlvk") || cmd.contains("simaudio.py")) && cmd.contains(&state));
-        if ours {
-            let _ = crate::phone::signal(pid, libc::SIGKILL);
-        }
     }
-    Ok(())
+    let _ = std::fs::remove_file(boot_pid_file(&x, &name));
+    // killed, then gone: a boot right after must not find this one's processes (darlingserver takes its
+    // processes down with it, not at once)
+    let start = Instant::now();
+    loop {
+        let mut left = 0;
+        for e in std::fs::read_dir("/proc")?.flatten() {
+            let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else {
+                continue;
+            };
+            let Ok(c) = std::fs::read(e.path().join("cmdline")) else {
+                continue;
+            };
+            let cmd = String::from_utf8_lossy(&c).replace('\0', " ");
+            let ours = cmd.starts_with(&server)
+                || ((cmd.contains("mtlvk") || cmd.contains("simaudio.py")) && cmd.contains(&state));
+            if ours {
+                left += 1;
+                let _ = crate::phone::signal(pid, libc::SIGKILL);
+            }
+        }
+        if left == 0 && !running_phones()?.iter().any(|p| p.dir == dir) {
+            return Ok(());
+        }
+        if start.elapsed() > Duration::from_secs(30) {
+            bail!("{name}'s processes are still there 30 s after being killed");
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
 }
 
 /// Boots phones 1 to `count` that do not run (scripts/boot-arm64.sh, in the background), then waits until each can
@@ -266,7 +347,12 @@ pub fn status() -> Result<String> {
     Ok(phones
         .iter()
         .map(|p| {
-            let name = p.dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = p
+                .dir
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             match udid(p).and_then(|u| springboard_secs(&u)) {
                 Some(s) if s >= READY_SECS => format!("{name}: ready (SpringBoard up {s} s)"),
                 Some(s) => format!("{name}: starting (SpringBoard up {s} s)"),
@@ -306,7 +392,11 @@ pub fn libexec(dev: &Device, program: &str, args: &[&str]) -> Result<String> {
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         let err = err.trim();
-        bail!("{program} {}: {}", args.join(" "), if err.is_empty() { &text } else { err });
+        bail!(
+            "{program} {}: {}",
+            args.join(" "),
+            if err.is_empty() { &text } else { err }
+        );
     }
     Ok(text)
 }

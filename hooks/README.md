@@ -1,10 +1,10 @@
 # Hooks
 
 Small libraries agent-sim loads into the phone's own processes to fix behavior that differs from a device. They are
-built for the iOS simulator from plain C against the Objective-C runtime, so a Mac with Xcode's command line tools
-builds them without an iOS SDK: `hooks/build.sh` compiles for arm64 macOS, marks the result as an iOS-simulator
-binary (`retag.py`) and signs it ad hoc. The built copies are checked in under `prebuilt/` so a Linux machine needs
-no Mac; CI rebuilds them on every change.
+built for the iOS simulator from plain C against the Objective-C runtime, without an iOS SDK: `hooks/build.sh`
+compiles for arm64 macOS and marks the result as an iOS-simulator binary (`retag.py`). It runs in an `ios` lease
+(Swift's clang, the MacOSX SDK from Xcode's .xip, LLVM's ld64.lld; see the script) or on a Mac with Xcode's command
+line tools. The built copies are checked in under `prebuilt/`; rebuild them with every change to the sources.
 
 | Library | Loaded into | What it does |
 |---|---|---|

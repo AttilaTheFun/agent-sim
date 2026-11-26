@@ -11,6 +11,15 @@
 - `agent-sim xctest` runs a test bundle on the arm64 phone, and `bazel/` (the `agent_sim_rules` module) is a test
   runner for rules_apple's iOS test rules that calls it: `bazel test` of iOS unit and UI tests in a Linux container,
   on several phones (`agent-sim phones up N`), with `--expect` for bundles whose failures are deliberate.
+- `agent-sim simctl` (and `xcrun simctl`, through an `xcrun` link): Xcode's simctl for the arm64 phones, the verbs
+  CI scripts and Isomer's launcher use (list, create, boot, bootstatus, shutdown, delete, install, launch, terminate,
+  spawn, io screenshot with `--mask`, ui appearance, keychain reset, status_bar). Visor's iOS proof runs on Linux
+  through it, its pictures identical to a Mac's below the status bar but for the screen that shows a chat thread.
+- `simctl status_bar override` holds the status bar as Apple's simulator does: the time (as Apple draws it, with the
+  narrow space its "AM" left), cellular and Wi-Fi bars and modes, the operator and the battery's level and state.
+- `simctl boot` then `bootstatus -b` boots a phone once, and `shutdown` returns once the phone is gone. Phones are
+  found from the account's home directory, not `$HOME`, which `bazel test` changes.
+- `hooks/build.sh` builds the hooks on Linux too (Swift's clang, the MacOSX SDK from Xcode's .xip, LLVM's ld64.lld).
 - Web pages no longer stay blank, and `open` brings Safari up after it was quit: reading the screen sent SIGUSR2 to
   processes still starting, which ended them; now only processes whose hook is ready are asked.
 - `open` checks that Safari started for a web link and asks again once if it did not.

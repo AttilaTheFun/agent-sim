@@ -205,7 +205,11 @@ static void write_front(void) {
 //   pasteboard-get                      the general pasteboard's text (SpringBoard may read it at any time; a
 //                                       background process may not)
 //   pasteboard-set\n<text>
-//   statusbar\ntime=9:41\nbattery=100\ncharging=1   override status bar items, as `simctl status_bar override`
+//   statusbar\n<key>=<value>\n...        override status bar items, as `simctl status_bar override`:
+//       time=9:41  shortTime=<the shorter form, after time= (default: the same)>
+//       battery=100  batteryState=0|1|2 (draining, charging, charged; charging=1 is batteryState=1)
+//       cellular=0-4  cellularStatus=<n>  operator=<name>  wifi=0-3  wifiStatus=<n>
+//         (a network status as StatusKit numbers it: 0 unavailable, 2 disconnected, 3 searching, 5 connected)
 //   statusbar-clear
 static id g_status_publisher;
 static id nsstring(const char *c) {
@@ -223,35 +227,72 @@ static const char *status_bar(char *req) {
 	// clearing publishes an empty set of overrides (the domain's emptyData crashed SpringBoard here)
 	bool clear = !strncmp(req, "statusbar-clear", 15);
 	id data = alloc_init("STMutableStatusBarData");
-	long battery = -1;
-	int charging = 0;
+	long battery = -1, battery_state = -1, cellular = -1, cellular_status = 5, wifi = -1, wifi_status = 5;
+	const char *operator = "Carrier";
 	for (char *line = clear ? NULL : strtok(req, "\n"); line; line = strtok(NULL, "\n")) {
 		char *eq = strchr(line, '=');
 		if (!eq) continue;
 		*eq = 0;
 		const char *k = line, *v = eq + 1;
-		if (!strcmp(k, "time")) {
+		if (!strcmp(k, "time") || !strcmp(k, "shortTime")) {
 			Class sc = objc_getClass("STStatusBarDataStringEntry");
 			id e = SEND(id, (id)sc, "entryWithStringValue:", id)((id)sc, SEL_("entryWithStringValue:"), nsstring(v));
-			SEND(void, data, "setTimeEntry:", id)(data, SEL_("setTimeEntry:"), e);
+			if (!strcmp(k, "time")) SEND(void, data, "setTimeEntry:", id)(data, SEL_("setTimeEntry:"), e);
 			SEND(void, data, "setShortTimeEntry:", id)(data, SEL_("setShortTimeEntry:"), e);
 		} else if (!strcmp(k, "battery")) {
 			battery = atol(v);
 		} else if (!strcmp(k, "charging")) {
-			charging = atoi(v);
+			if (atoi(v)) battery_state = 1;
+		} else if (!strcmp(k, "batteryState")) {
+			battery_state = atol(v);
+		} else if (!strcmp(k, "cellular")) {
+			cellular = atol(v);
+		} else if (!strcmp(k, "cellularStatus")) {
+			cellular_status = atol(v);
+		} else if (!strcmp(k, "operator")) {
+			operator = v;
+		} else if (!strcmp(k, "wifi")) {
+			wifi = atol(v);
+		} else if (!strcmp(k, "wifiStatus")) {
+			wifi_status = atol(v);
 		}
 	}
-	if (battery >= 0) {
+	if (battery >= 0 || battery_state >= 0) {
 		Class bc = objc_getClass("STStatusBarDataBatteryEntry");
 		id e = SEND(id, (id)bc, "entryWithCapacity:state:saverMode:prominentlyShowsDetailString:detailString:", long, long, bool, bool, id)(
-			(id)bc, SEL_("entryWithCapacity:state:saverMode:prominentlyShowsDetailString:detailString:"), battery, charging ? 1 : 0,
-			false, false, nsstring(""));
+			(id)bc, SEL_("entryWithCapacity:state:saverMode:prominentlyShowsDetailString:detailString:"), battery >= 0 ? battery : 100,
+			battery_state >= 0 ? battery_state : 0, false, false, nsstring(""));
 		SEND(void, data, "setMainBatteryEntry:", id)(data, SEL_("setMainBatteryEntry:"), e);
+	}
+	if (cellular >= 0) {
+		// type 0: bars with no data network's name beside them (Wi-Fi carries the data, as `--dataNetwork wifi`)
+		Class cc = objc_getClass("STStatusBarDataCellularEntry");
+		id e = SEND(id, (id)cc, "entryWithType:stringValue:crossfadeStringValue:badgeStringValue:wifiCalling:callForwarding:showsSOSWhenDisabled:sosAvailable:isBootstrapCellular:status:lowDataMode:rawValue:displayValue:displayRawValue:",
+			long, id, id, id, bool, bool, bool, bool, bool, long, bool, long, long, bool)(
+			(id)cc, SEL_("entryWithType:stringValue:crossfadeStringValue:badgeStringValue:wifiCalling:callForwarding:showsSOSWhenDisabled:sosAvailable:isBootstrapCellular:status:lowDataMode:rawValue:displayValue:displayRawValue:"),
+			0, nsstring(operator), nil, nil, false, false, false, false, false, cellular_status, false, cellular, cellular, false);
+		SEND(void, data, "setCellularEntry:", id)(data, SEL_("setCellularEntry:"), e);
+	}
+	if (wifi >= 0) {
+		Class wc = objc_getClass("STStatusBarDataWifiEntry");
+		id e = SEND(id, (id)wc, "entryWithType:status:lowDataMode:rawValue:displayValue:displayRawValue:", long, long, bool, long, long, bool)(
+			(id)wc, SEL_("entryWithType:status:lowDataMode:rawValue:displayValue:displayRawValue:"), 0, wifi_status, false, wifi, wifi, false);
+		SEND(void, data, "setWifiEntry:", id)(data, SEL_("setWifiEntry:"), e);
 	}
 	id ov = SEND(id, (id)objc_getClass("STMutableStatusBarOverridesStatusDomainData"), "alloc")(
 		(id)objc_getClass("STMutableStatusBarOverridesStatusDomainData"), SEL_("alloc"));
 	ov = SEND(id, ov, "initWithCustomOverrides:suppressedBackgroundActivityIdentifierListData:", id, id)(
 		ov, SEL_("initWithCustomOverrides:suppressedBackgroundActivityIdentifierListData:"), data, nil);
+	// an empty set first: an item lost from the first overrides after a boot (the time, or the battery) stayed lost, as
+	// if each publication sent only what changed since the last, and a clear in between brings every item back
+	if (!clear) {
+		id none = SEND(id, (id)objc_getClass("STMutableStatusBarOverridesStatusDomainData"), "alloc")(
+			(id)objc_getClass("STMutableStatusBarOverridesStatusDomainData"), SEL_("alloc"));
+		none = SEND(id, none, "initWithCustomOverrides:suppressedBackgroundActivityIdentifierListData:", id, id)(
+			none, SEL_("initWithCustomOverrides:suppressedBackgroundActivityIdentifierListData:"), alloc_init("STMutableStatusBarData"), nil);
+		SEND(void, g_status_publisher, "setData:", id)(g_status_publisher, SEL_("setData:"), none);
+		usleep(250000);
+	}
 	SEND(void, g_status_publisher, "setData:", id)(g_status_publisher, SEL_("setData:"), ov);
 	return "ok";
 }
