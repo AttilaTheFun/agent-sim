@@ -26,6 +26,59 @@ tapped @e2 button "General"
 
 > **Status: early.** It works end to end; expect rough edges, and see [what does not work yet](docs/KNOWN_ISSUES.md).
 
+## iOS tests on arm64 Linux, natively
+
+This fork's `arm64` branch runs Apple's arm64 iOS simulator runtime **natively on arm64 Linux**: no translator, the
+runtime's own code on the CPU, under Darling with [patches/darling-arm64](patches/darling-arm64). It is the iOS
+platform of a CI and agent setup that builds iOS apps on Linux with
+[rules_applecross](https://github.com/apple-cross-toolchain/rules_applecross) and tests them here: agent-sim picks up
+where rules_applecross leaves off. [docs/ARM64.md](docs/ARM64.md) has the details.
+
+What works today, on iOS 27.2 (24B8117) in an arm64 Linux container (Ubuntu 24.04 or 26.04):
+
+- **The phone:** `agent-sim phones up N` boots N iPhone 17s to the home screen; apps install, launch and draw
+  (Metal through x86Sim's Vulkan stand-in, on the CPU), and `screenshot`, `tap`, `swipe`, `type` and `press` drive
+  them.
+- **XCTest:** logic tests, app-hosted unit tests and UI tests (XCUITest), with XCTest's frameworks taken from the same
+  Xcode .xip the bundles were built against. `agent-sim xctest` runs a bundle on a free phone and writes JUnit.
+- **`bazel test`:** `bazel/` is a test runner for rules_apple's `ios_unit_test` and `ios_ui_test`
+  (`runner = "@agent_sim_rules//:ios_runner"`), so `bazel test //...` builds the bundles on Linux and runs them on
+  the phones.
+- **`xcrun simctl`** for scripts written for a Mac: the verbs CI scripts and Bazel launchers use (create, boot,
+  install, launch, `io screenshot`, `status_bar`, `ui appearance`, ...). Visor's iOS screenshot proof, written for a
+  Mac, runs on Linux through it (with fallbacks for `ditto` and `sips`), and most of its pictures are
+  pixel-identical to a Mac's.
+
+Its limits, today:
+
+- A phone needs two to three minutes to boot (every boot; [docs/ARM64.md](docs/ARM64.md) has why) and about 2.6 GB
+  of memory with an app running. Drawing is in software, so animations are slower than on a Mac.
+- Only iOS 27.2 and the iPhone 17 are tried; no device builds, no push, no Apple services.
+- An app crashes now and then on a phone's first boot (about one UI test run in eight); `--flaky_test_attempts=2`
+  covers it.
+
+### Building test bundles on Linux
+
+rules_applecross builds the app and its test bundles on Linux from an Xcode .xip; agent-sim runs them.
+[tests/apps/XCTestDemo](tests/apps/XCTestDemo) is a complete example workspace: its `MODULE.bazel` brings in
+rules_apple, rules_applecross and agent-sim's runner, and its `BUILD.bazel` has a logic test, a hosted unit test and
+a UI test.
+
+```sh
+cd tests/apps/XCTestDemo
+printf 'build --distdir=%s\ncommon --repo_env=CC=clang\n' ~/xcode > .bazelrc.user   # ~/xcode holds Xcode_27.2.xip
+agent-sim phones up 2
+bazel test --test_env=AGENT_SIM_EXPECT=$PWD/expected.txt //...   # its sources fail and skip some tests on purpose
+```
+
+### Not clean-room
+
+rules_applecross is clean-room: it builds Apple bundles without Apple's tools, and nothing in it comes from looking
+inside Apple's binaries. agent-sim is not, and is kept apart from it. To run Apple's simulator runtime it reads that
+runtime's own interfaces (class and method names, the messages it logs) and patches around what Linux lacks. The
+simulator never ships anywhere; only the bundles rules_applecross builds do. Apple's runtime and Xcode are fetched
+onto your machine and are never part of this repository.
+
 ## Quick start
 
 On an x86-64 Linux machine with Ubuntu 24.04 (8+ CPUs, 16 GB of memory, 60 GB of free disk):
