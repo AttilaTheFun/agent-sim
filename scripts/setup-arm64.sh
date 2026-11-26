@@ -59,14 +59,20 @@ fi
 # ICU's data (and other large files) are Git LFS objects: without git-lfs the checkout holds their pointers
 git lfs install > /dev/null
 git -C "$D" submodule foreach -q --recursive 'git lfs pull > /dev/null 2>&1 || true'
-if [ ! -f "$D/.agent-sim-patched" ]; then
+# The patches applied are recorded by their hash: a checkout with other patches (a CI job on an image made from an
+# older commit) puts the tree back to BASE.txt's commits, applies its own and builds again
+patched=$(cat "$P"/*.patch "$P/BASE.txt" | sha256sum | cut -c1-64)
+if [ "$(cat "$D/.agent-sim-patched" 2>/dev/null)" != "$patched" ]; then
+	git -C "$D" checkout -q -f "$(base darling)"
+	git -C "$D" clean -q -fd -e /build -e /.agent-sim-patched
 	git -C "$D" apply "$P/darling.patch"
 	for sub in xnu darlingserver libkqueue iokitd libplatform libpthread dyld libunwind objc4 sqlite libnetwork; do
 		[ -s "$P/$sub.patch" ] || continue
-		git -C "$D/src/external/$sub" checkout -q "$(base "$sub")"
+		git -C "$D/src/external/$sub" checkout -q -f "$(base "$sub")"
+		git -C "$D/src/external/$sub" clean -q -fd
 		git -C "$D/src/external/$sub" apply "$P/$sub.patch"
 	done
-	touch "$D/.agent-sim-patched"
+	echo "$patched" > "$D/.agent-sim-patched"
 fi
 if [ ! -x /usr/local/bin/darling ] || [ "$D/.agent-sim-patched" -nt /usr/local/bin/darling ]; then
 	# twice: Ruby's bundles link against CFNetwork, which the build does not wait for (the second run finishes them)
