@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Turn a fresh Ubuntu 24.04 arm64 machine (or container) into one that boots Apple's iOS simulator runtime natively,
+# Turn a fresh Ubuntu 24.04 or 26.04 arm64 machine (or container) into one that boots Apple's iOS simulator runtime natively,
 # with no translator: Darling built from darlinghq/darling plus patches/darling-arm64 (x86Sim's Darling changes merged
 # with Darling's arm64 host support, and the fixes arm64 needed), x86Sim's device setup and in-simulator helpers, and
 # x86Sim's Metal stand-in (mtlvk) built for arm64. Re-runnable: each step skips what is already done. Run as root
@@ -30,6 +30,23 @@ x86base() { awk -v k="$1" '$1 == k { print $3 }' "$P/BASE.txt"; }     # the x86s
 
 log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'setup-arm64.sh: %s\n' "$*" >&2; exit 1; }
+# fetch URL SHA256 FILE: a download, kept only if it is the one pinned here (nimbus-base's darwin layer builds from this:
+# every download a fixed version, checked)
+fetch() {
+	curl -fsSL -o "$3" "$1"
+	echo "$2  $3" | sha256sum -c --quiet - || { rm -f "$3"; die "$1 is not the file pinned here"; }
+}
+
+# Pinned downloads (Linux arm64)
+RUST_VERSION=1.100.0
+RUSTUP_INIT=https://static.rust-lang.org/rustup/archive/1.29.3/aarch64-unknown-linux-gnu/rustup-init
+RUSTUP_INIT_SHA256=9f608c142e0e38a78957d0661ba1dfaf0b6fb37184cfaa4b9a0aa57af6184282
+SEVENZIP=https://www.7-zip.org/a/7z2501-linux-arm64.tar.xz
+SEVENZIP_SHA256=39c5140f02ce4436599303c59a149f654cb1bbc47cdc105a942120d747ae040d
+IPSW=https://github.com/blacktop/ipsw/releases/download/v3.1.752/ipsw_3.1.752_linux_arm64.tar.gz
+IPSW_SHA256=306c20b31d7478b7154cd27209603fbd4fb0bab28025226fa946f66ac1a3376d
+BAZELISK=https://github.com/bazelbuild/bazelisk/releases/download/v1.30.0/bazelisk-linux-arm64
+BAZELISK_SHA256=b2bcc040c213b44586b121bda6d983c35df121b917c3a7a66fb16f2fa0df1a4f
 
 log "Checking the machine"
 [ "$(uname -m)" = aarch64 ] || die "this is the arm64 setup; on x86-64 use scripts/setup-vm.sh"
@@ -106,7 +123,11 @@ if [ ! -d "$X/external/metal2vulkan/crates" ]; then
 	ln -sfn "$WORK/metal2vulkan" "$X/external/metal2vulkan"
 fi
 if [ ! -x "$X/linux/mtlvk/target/release/mtlvk" ]; then
-	command -v cargo > /dev/null || [ -x "$HOME/.cargo/bin/cargo" ] || curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
+	command -v cargo > /dev/null || [ -x "$HOME/.cargo/bin/cargo" ] || {
+		fetch "$RUSTUP_INIT" "$RUSTUP_INIT_SHA256" "$WORK/rustup-init"
+		chmod 755 "$WORK/rustup-init" && "$WORK/rustup-init" -y -q --profile minimal --default-toolchain "$RUST_VERSION"
+		rm -f "$WORK/rustup-init"
+	}
 	(. "$HOME/.cargo/env" && cd "$X/linux/mtlvk" && cargo build -q --release)
 fi
 [ -x "$X/host/simhost/simhost-arm64" ] ||
@@ -117,14 +138,12 @@ if [ "$RUNTIME_BUILD" = none ]; then
 	echo "skipped (RUNTIME_BUILD=none)"
 elif [ ! -d "$(readlink -f "$X/runtimes/"*"-$RUNTIME_BUILD-arm64/RuntimeRoot" 2>/dev/null || echo /nonexistent)" ]; then
 	command -v 7z > /dev/null || {
-		curl -fsSL -o "$WORK/7z.tar.xz" https://www.7-zip.org/a/7z2501-linux-arm64.tar.xz
+		fetch "$SEVENZIP" "$SEVENZIP_SHA256" "$WORK/7z.tar.xz"
 		mkdir -p "$WORK/7z" && tar xf "$WORK/7z.tar.xz" -C "$WORK/7z" && ln -sf "$WORK/7z/7zz" /usr/local/bin/7z
 	}
 	command -v ipsw > /dev/null || {
-		url=$(curl -fsSL https://api.github.com/repos/blacktop/ipsw/releases/latest | python3 -c 'import json, sys
-print(next(a["browser_download_url"] for a in json.load(sys.stdin)["assets"]
-           if a["name"].startswith("ipsw_") and "linux_arm64" in a["name"] and a["name"].endswith(".tar.gz")))')
-		mkdir -p "$WORK/ipsw" && curl -fsSL "$url" | tar xz -C "$WORK/ipsw" && install -m755 "$WORK/ipsw/ipsw" /usr/local/bin/ipsw
+		fetch "$IPSW" "$IPSW_SHA256" "$WORK/ipsw.tar.gz"
+		mkdir -p "$WORK/ipsw" && tar xzf "$WORK/ipsw.tar.gz" -C "$WORK/ipsw" && install -m755 "$WORK/ipsw/ipsw" /usr/local/bin/ipsw
 	}
 	(cd "$X" && python3 -I cli/libexec/arm64/runtime-fetch.py fetch "$RUNTIME_BUILD")
 fi
@@ -141,9 +160,10 @@ log "agent-sim's command (its test runner for \`bazel test\`: bazel/) and Bazel"
 ln -sf "$(cd "$HERE/.." && pwd)/target/release/agent-sim" /usr/local/bin/agent-sim
 # xcrun simctl for scripts written for a Mac (agent-sim simctl)
 ln -sf /usr/local/bin/agent-sim /usr/local/bin/xcrun
-# Bazel (bazelisk, which fetches the version a workspace's .bazelversion names), for `bazel test` of iOS test targets
+# Bazel (bazelisk, which fetches the version a workspace's .bazelversion names), for `bazel test` of iOS test targets,
+# unless the machine has one (nimbus-base's build layer does, the same pin)
 command -v bazel > /dev/null || {
-	curl -fsSL -o /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-arm64
+	fetch "$BAZELISK" "$BAZELISK_SHA256" /usr/local/bin/bazel
 	chmod 755 /usr/local/bin/bazel
 }
 
