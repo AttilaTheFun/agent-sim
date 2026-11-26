@@ -71,6 +71,11 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   up for two minutes: about two minutes after boot); `agent-sim phones status` lists them. For bundles whose failures
   are deliberate, `--expect FILE` (or `--test_env=AGENT_SIM_EXPECT=FILE`) passes a test when every test had the outcome
   FILE gives it (XCTestDemo's: `tests/apps/XCTestDemo/expected.txt`), so `bazel test //...` there passes.
+- **The image** of Nimbus' `ios` leases: `images/arm64/Containerfile` (about 4.4 GB) runs `setup-arm64.sh` with
+  `RUNTIME_BUILD=none` and drops Darling's sources and build tree; Darling's prefix records the patches it was built
+  with, so `setup-arm64.sh` in a lease skips Darling and only adds what is missing. Apple's runtime
+  (`$X86SIM_ROOT/runtimes/ios-27.2-24B8117-arm64`) and XCTest's platform (`$X86SIM_ROOT/sdks/iPhoneSimulator.platform`)
+  are mounted into the lease, never in the image.
 
 ## What does not work yet
 

@@ -141,6 +141,12 @@ Screenshots, the held status bar and a real app's suite are still to do.
 
 ### M6. In Nimbus and CI
 
+Under way (2026-11-26): Logan wants every repository's agents and CI in Linux containers, with iOS through agent-sim
+as Nimbus' `ios` platform (nimbus#200). The image is `images/arm64/Containerfile` (no Apple files; built on GitHub's
+arm64 runner into ghcr.io/attilathefun/agent-sim-arm64), the runtime and XCTest's platform come from a read-only Nimbus
+volume, and a lease brings its phones up with `agent-sim phones up N`. agent-sim itself has no CI (Logan): it is
+tested on demand in a lease with XCTestDemo and `--expect`.
+
 1. A Nimbus config (an image with Darling built in, the runtime and Xcode's platform frameworks in Nimbus
    storage, not in the image) that leases a container with a phone service already booted. Owned with the Nimbus
    session.
