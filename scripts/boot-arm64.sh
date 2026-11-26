@@ -103,6 +103,24 @@ if [ -n "${AGENT_SIM_XCTEST_PLATFORM:-}" ] && [ ! -e "$X/sdks/iPhoneSimulator.pl
 	ln -s "$(readlink -f "$AGENT_SIM_XCTEST_PLATFORM")" "$X/sdks/iPhoneSimulator.platform"
 fi
 python3 -I "$X/cli/libexec/mksimdevice.py" "$D" $A64_JOBS > /dev/null
+# agent-sim's hooks (hooks/prebuilt, simulator libraries) in SpringBoard: the status bar override (`simctl status_bar`)
+# and the accessibility reader. A native boot has no x86Sim per-program environment file (its translator's): SpringBoard's
+# job gets them as X86SIM_A64_GENV_DYLD_INSERT_LIBRARIES, which Darling's dyld applies (patches/darling-arm64), after
+# the libraries every process gets. AGENT_SIM_HOOKS=0 leaves them out.
+HOOKS=$(cd "$HERE/../hooks/prebuilt" 2>/dev/null && pwd || true)
+if [ "${AGENT_SIM_HOOKS:-1}" = 1 ] && [ -f "$HOOKS/libagentsim-ax.dylib" ]; then
+	python3 -I - "$D" "/Volumes/SystemRoot$HOOKS" <<-'PY'
+	import plistlib, sys
+	d, h = sys.argv[1:3]
+	env = dict(l.rstrip("\n").split("=", 1) for l in open(d + "/sim.env") if "=" in l)
+	libs = [x for x in env.get("DYLD_INSERT_LIBRARIES", "").split(":") if x]
+	libs += [h + "/libagentsim-ax.dylib", h + "/libagentsim-springboard.dylib"]
+	p = d + "/LaunchDaemons/com.apple.SpringBoard.plist"
+	job = plistlib.load(open(p, "rb"))
+	job.setdefault("EnvironmentVariables", {})["X86SIM_A64_GENV_DYLD_INSERT_LIBRARIES"] = ":".join(libs)
+	plistlib.dump(job, open(p, "wb"))
+	PY
+fi
 # App accessibility on, as Accessibility Inspector turns it on in Apple's simulator (and setup-vm.sh does on x86-64):
 # without it a UI test runner waits for accessibility to load and gives up ("Timed out while loading Accessibility")
 python3 -I - "$D/data/Library/Preferences/com.apple.Accessibility.plist" <<-'PY'

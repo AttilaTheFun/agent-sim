@@ -70,8 +70,11 @@ pub fn processes(dev: &Device, pick: impl Fn(u32, &str) -> bool) -> Result<Vec<u
 
 /// Like processes, with each one's Darling pid: (Linux pid, Darling pid).
 pub fn process_ids(dev: &Device, pick: impl Fn(u32, &str) -> bool) -> Result<Vec<(u32, u32)>> {
-    let name = device_name(dev)?;
-    let want = format!("SIMULATOR_DEVICE_NAME={name}");
+    // a phone's processes carry its UDID (every phone of the native arm64 boot has the same device name)
+    let want = match sim_env(dev)?.get("SIMULATOR_UDID") {
+        Some(udid) => format!("SIMULATOR_UDID={udid}"),
+        None => format!("SIMULATOR_DEVICE_NAME={}", device_name(dev)?),
+    };
     let mut out = Vec::new();
     for entry in std::fs::read_dir("/proc")?.flatten() {
         let Some(pid) = entry

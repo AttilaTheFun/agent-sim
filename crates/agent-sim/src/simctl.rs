@@ -64,6 +64,16 @@ fn runtime_root() -> Result<PathBuf> {
     Ok(std::fs::canonicalize(&r).unwrap_or(r))
 }
 
+/// Whether the runtime is there: overlaid already, or where boot-arm64.sh overlays it from (AGENT_SIM_RUNTIME_RO, or
+/// `<x86Sim>/runtimes-ro/<runtime>`).
+fn runtime_available() -> Result<bool> {
+    let x = arm64::x86sim_root()?;
+    let ro = std::env::var_os("AGENT_SIM_RUNTIME_RO")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| x.join("runtimes-ro").join(RUNTIME_DIR));
+    Ok(runtime_root()?.is_dir() || ro.join("RuntimeRoot").exists())
+}
+
 /// A path the host gave, as the phone's processes see it (Darling's view of the Linux root).
 fn device_view(p: &str) -> String {
     let abs = Path::new(p);
@@ -117,7 +127,7 @@ fn list(args: &[String]) -> Result<i32> {
                 .collect();
             let rt = serde_json::json!({
                 "identifier": RUNTIME_ID, "platform": "iOS", "version": "27.2", "buildversion": "24B8117",
-                "name": "iOS 27.2", "isAvailable": runtime_root()?.is_dir(), "supportedDeviceTypes": types,
+                "name": "iOS 27.2", "isAvailable": runtime_available()?, "supportedDeviceTypes": types,
             });
             if json {
                 println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "runtimes": [rt] }))?);
@@ -343,6 +353,55 @@ fn ui(args: &[String]) -> Result<i32> {
     Ok(0)
 }
 
+/// The time simctl's `--time` shows: an ISO 8601 date as its hour and minute ("2007-01-09T09:41:00.000-05:00" is
+/// 9:41), anything else as it is.
+fn shown_time(t: &str) -> String {
+    let Some((_, clock)) = t.split_once('T') else {
+        return t.to_string();
+    };
+    let mut parts = clock.split(':');
+    match (
+        parts.next().and_then(|h| h.parse::<u32>().ok()),
+        parts.next().and_then(|m| m.get(..2)),
+    ) {
+        (Some(h), Some(m)) => format!("{h}:{m}"),
+        _ => t.to_string(),
+    }
+}
+
+/// `status_bar <udid> override [--time T] [--batteryLevel N] [--batteryState charging|charged|discharging] ...` or
+/// `status_bar <udid> clear`, through agent-sim's hook in SpringBoard (the time and the battery; the network items are
+/// the simulator's own, Wi-Fi at full).
+fn status_bar(args: &[String]) -> Result<i32> {
+    let (Some(udid), Some(what)) = (args.first(), args.get(1)) else {
+        return Err(usage());
+    };
+    let dev = find(udid)?;
+    if what == "clear" {
+        println!("{}", crate::cmd::status_bar(&dev, None, None, false, true)?);
+        return Ok(0);
+    }
+    if what != "override" {
+        bail!("simctl status_bar: override, clear");
+    }
+    let (mut time, mut battery, mut charging) = (None, None, false);
+    let mut it = args[2..].iter();
+    while let Some(flag) = it.next() {
+        let value = it.next().map(String::as_str).unwrap_or("");
+        match flag.as_str() {
+            "--time" => time = Some(shown_time(value)),
+            "--batteryLevel" => battery = value.parse::<u8>().ok(),
+            "--batteryState" => charging = value == "charging",
+            _ => {}
+        }
+    }
+    println!(
+        "{}",
+        crate::cmd::status_bar(&dev, time.as_deref(), battery, charging, false)?
+    );
+    Ok(0)
+}
+
 /// `agent-sim simctl ...`: Xcode's simctl, for the arm64 phones; the exit status simctl would give.
 pub fn run(args: &[String]) -> Result<i32> {
     let (verb, rest) = args.split_first().ok_or_else(usage)?;
@@ -409,12 +468,7 @@ pub fn run(args: &[String]) -> Result<i32> {
         "io" => io(rest),
         "keychain" => keychain(rest),
         "ui" => ui(rest),
-        "status_bar" => {
-            // agent-sim's SpringBoard hook holds the status bar on x86-64 phones; on arm64 it is not loaded yet
-            eprintln!("agent-sim simctl: status_bar is not available on arm64 phones yet; the status bar shows the clock");
-            let _ = find(arg(0)?)?;
-            Ok(0)
-        }
+        "status_bar" => status_bar(rest),
         _ => Err(usage()),
     }
 }
