@@ -1,0 +1,43 @@
+# The image of Nimbus' `ios` leases (images/arm64/Containerfile): agent-sim's iOS simulator on arm64 Linux, with
+# nothing of Apple's in it (the runtime and Xcode's XCTest platform are mounted from a Nimbus volume). Built on
+# GitHub's arm64 runner and pushed to ghcr.io/attilathefun/agent-sim-arm64 as :<commit> and :arm64, when what the
+# image holds changes on the arm64 branch, or by hand. Not CI: nothing is tested here (Logan, 2026-11-26).
+name: ios image
+on:
+  push:
+    branches: [arm64]
+    paths:
+      - patches/darling-arm64/**
+      - scripts/setup-arm64.sh
+      - scripts/build-simhost-arm64.sh
+      - scripts/boot-arm64.sh
+      - scripts/xip-platform.py
+      - crates/**
+      - bazel/**
+      - images/arm64/**
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: ios-image
+  cancel-in-progress: true
+jobs:
+  image:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v5
+      # Darling's build needs ~15 GB at its peak; the runner keeps ~14 GB free until its preinstalled SDKs go
+      - name: Room for Darling's build
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache /usr/local/share/boost && df -h /
+      - name: Build and push
+        env:
+          IMAGE: ghcr.io/attilathefun/agent-sim-arm64
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          tag=$(git rev-parse --short=12 HEAD)
+          docker build --platform linux/arm64 -f images/arm64/Containerfile -t "$IMAGE:$tag" -t "$IMAGE:arm64" .
+          docker push "$IMAGE:$tag" && docker push "$IMAGE:arm64"
