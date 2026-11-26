@@ -89,7 +89,8 @@ with x86Sim's runner and pass as in Xcode's simulator, with JUnit XML (docs/ARM6
 
 Steps 1 to 3 are done (2026-11-26): `bazel test` of XCTestDemo's three targets runs them in the container with the
 results Xcode's simulator gives, with JUnit XML, `--test_filter` and result caching, on as many phones as are booted
-(two tested). Step 4 is next.
+(two tested). From step 4: a test whose phone stops mid-run runs again on another phone (tested by killing a
+phone's Darling server during XCTestDemo's UI tests); rebooting the stopped phone, and CI, are still to do.
 
 The plan, in the order it lands. rules_apple's test rules expand the runner's script template with the test bundle
 (`%(test_bundle_path)s`, a `.zip`), the test host (`%(test_host_path)s`, an `.ipa`, or nothing for a logic test),

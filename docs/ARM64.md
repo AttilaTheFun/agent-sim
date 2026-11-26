@@ -65,7 +65,8 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   scripts/boot-arm64.sh` boots a second (`device-a64-2`, its own Darling prefix `~/.darling-2`), `agent-sim xctest`
   takes whichever is free, and `bazel test --local_test_jobs=2` keeps both busy (XCTestDemo's three targets: 133 s
   on two phones, about 200 s on one). Each phone after XCTestDemo's UI tests takes about 3.7 GB (2.8 GB of its own and
-  0.9 GB of shared memory), so a 16 GB container holds three or four.
+  0.9 GB of shared memory), so a 16 GB container holds three or four. If a phone stops during a test (its Darling
+  server gone), the test runs once more on another booted phone; the stopped phone stays down until booted again.
 
 ## What does not work yet
 
