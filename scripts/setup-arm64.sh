@@ -45,7 +45,7 @@ apt-get install -y -q --no-install-recommends ca-certificates git git-lfs curl x
 	libgif-dev libavutil-dev libpulse-dev libavformat-dev libavcodec-dev libswresample-dev libdbus-1-dev \
 	libxkbfile-dev libssl-dev libstdc++-12-dev libcap2-bin libvulkan-dev libxkbcommon-dev libcap-dev \
 	libbz2-dev zlib1g-dev libxi-dev libxext-dev libxfixes-dev libxrender-dev libxtst-dev \
-	mesa-vulkan-drivers python3-pil cpio unzip
+	mesa-vulkan-drivers python3-pil cpio unzip zstd
 # x86Sim's test runner thins Xcode's universal XCTest frameworks with an unversioned llvm-lipo, which Ubuntu's llvm
 # packages leave out
 command -v llvm-lipo >/dev/null || ln -sf "$(ls /usr/bin/llvm-lipo-* | sort -V | tail -1)" /usr/local/bin/llvm-lipo
