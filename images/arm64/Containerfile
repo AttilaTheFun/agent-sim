@@ -1,0 +1,19 @@
+# agent-sim's iOS simulator on arm64 Linux, the image of Nimbus' `ios` leases (docs/ARM64.md): Darling built with
+# patches/darling-arm64, x86Sim with its Metal stand-in, agent-sim (its `phones`, `xctest` and the test runner for
+# `bazel test`) and Bazel. Nothing of Apple's: the iOS runtime and Xcode's XCTest platform are mounted, read-only, at
+# /root/x86sim/runtimes/ios-27.2-24B8117-arm64 and /root/x86sim/sdks/iPhoneSimulator.platform.
+#
+#   buildah build --platform linux/arm64 -f images/arm64/Containerfile -t agent-sim-arm64 .     (from the repository)
+#
+# A lease brings its phones up with `agent-sim phones up N`.
+FROM docker.io/library/ubuntu:24.04
+COPY . /root/agent-sim
+# One layer, so what only the build needs (Darling's build tree, ~20 GB; Rust's caches) never reaches the image
+RUN RUNTIME_BUILD=none DARLING_CHECK=0 /root/agent-sim/scripts/setup-arm64.sh \
+	&& rm -rf /root/darling/build /root/.cargo/registry /root/.cargo/git \
+		/root/agent-sim/target/release/build /root/agent-sim/target/release/deps /root/agent-sim/target/release/incremental \
+		/root/x86sim/linux/mtlvk/target/release/build /root/x86sim/linux/mtlvk/target/release/deps \
+		/var/lib/apt/lists/*
+ENV X86SIM_ROOT=/root/x86sim
+WORKDIR /root
+CMD ["sleep", "infinity"]

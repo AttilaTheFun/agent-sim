@@ -12,6 +12,7 @@
 #   RUNTIME_BUILD   iOS runtime build from Apple's catalogue (default 24B8117, iOS 27.2); none: no runtime (an image
 #                   for CI, whose jobs fetch the runtime themselves by running this again)
 #   JOBS            parallel build jobs (default: the CPU count)
+#   DARLING_CHECK   0: do not start Darling once to check it (building an image)
 #   XCODE_XIP       an Xcode .xip (the one the test bundles were built against: Xcode 27.2, 27B52, for
 #                   rules_applecross): its iPhoneSimulator XCTest frameworks go to $WORK/x86sim/sdks, for
 #                   x86Sim's test runner (cli/libexec/xctest.py)
@@ -81,7 +82,8 @@ if [ ! -x /usr/local/bin/darling ] || [ "$D/.agent-sim-patched" -nt /usr/local/b
 		-DTARGET_ARM64=ON > /dev/null &&
 		{ ninja -j "$JOBS" -k 0 || ninja -j "$JOBS"; } && ninja install > /dev/null)
 fi
-darling shell uname -m > /dev/null || die "darling shell does not start"
+# (not while building an image: its builder may not allow the namespaces Darling needs; the phones' boot checks it)
+[ "${DARLING_CHECK:-1}" = 0 ] || darling shell uname -m > /dev/null || die "darling shell does not start"
 
 log "x86Sim $(base x86sim/x86sim | cut -c1-12): device setup, in-simulator helpers, Metal stand-in"
 X=$WORK/x86sim
