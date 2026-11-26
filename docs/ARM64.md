@@ -75,8 +75,9 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   `RUNTIME_BUILD=none` and drops Darling's sources and build tree; Darling's prefix records the patches it was built
   with, so `setup-arm64.sh` in a lease skips Darling and only adds what is missing. Apple's runtime
   (`$X86SIM_ROOT/runtimes/ios-27.2-24B8117-arm64`) and XCTest's platform (`$X86SIM_ROOT/sdks/iPhoneSimulator.platform`)
-  are mounted into the lease, never in the image. The runtime may be read-only: mounted at
-  `$X86SIM_ROOT/runtimes-ro/<runtime>`, `boot-arm64.sh` puts an overlay over it at `$X86SIM_ROOT/runtimes/<runtime>`
+  come from outside the image. Both may be read-only (a Bazel repository's extracted archive, or a volume):
+  `AGENT_SIM_RUNTIME_RO` (default `$X86SIM_ROOT/runtimes-ro/ios-27.2-24B8117-arm64`) and `AGENT_SIM_XCTEST_PLATFORM`
+  name them; `boot-arm64.sh` puts an overlay over the runtime at `$X86SIM_ROOT/runtimes/<runtime>`
   (x86Sim writes each device's launch angels into the runtime's LaunchAngels directory, the only place launchd_sim
   takes angels from), and Darling keeps its rewritten-instruction lists in each phone's prefix.
 - **Driving a phone from outside** (Nimbus' driver): `agent-sim --device <device dir> install <.app|.ipa>`,

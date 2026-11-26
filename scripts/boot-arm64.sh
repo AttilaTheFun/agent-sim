@@ -77,23 +77,31 @@ if [ "${X86SIM_AUDIO_SOCKET:-}" != none ]; then
 	(X86SIM_AUDIO_PLAYBACK=${X86SIM_AUDIO_PLAYBACK:-0} setsid python3 "$X/cli/libexec/simaudio.py" "$X86SIM_AUDIO_SOCKET" \
 		> "$ST/simaudio.log" 2>&1 < /dev/null & echo $! > "$ST/simaudio.pid")
 fi
-# A runtime on a read-only volume (Nimbus' ios leases mount Apple's at $X86SIM_ROOT/runtimes-ro/<runtime>): x86Sim
-# writes each device's launch angels into the runtime's own LaunchAngels directory (launchd_sim takes a job as an angel
-# only from there), so the runtime is an overlay, the volume below and this machine's writes above. Once per machine,
-# whichever phone boots first.
+# Apple's files may be read-only, from elsewhere: AGENT_SIM_RUNTIME_RO, the runtime's directory (RuntimeRoot,
+# extracted/; default $X86SIM_ROOT/runtimes-ro/ios-27.2-24B8117-arm64), and AGENT_SIM_XCTEST_PLATFORM, Xcode's
+# iPhoneSimulator.platform (default $X86SIM_ROOT/sdks/iPhoneSimulator.platform): a Bazel repository's extracted archive,
+# or a read-only volume. x86Sim writes each device's launch angels into the runtime's own LaunchAngels directory
+# (launchd_sim takes a job as an angel only from there), so a read-only runtime gets an overlay at
+# $X86SIM_ROOT/runtimes/ios-27.2-24B8117-arm64, the read-only files below and this machine's writes above. Once per
+# machine, whichever phone boots first.
+RUNTIME_NAME=ios-27.2-24B8117-arm64
+RUNTIME_RO=${AGENT_SIM_RUNTIME_RO:-$X/runtimes-ro/$RUNTIME_NAME}
 mkdir -p "$X/var"
-for ro in "$X"/runtimes-ro/*/; do
-	[ -d "$ro" ] || continue
-	name=$(basename "$ro")
+if [ -d "$RUNTIME_RO" ]; then
 	(
 		flock 9
-		if ! mountpoint -q "$X/runtimes/$name"; then
-			mkdir -p "$X/runtimes/$name" "$X/var/overlay/$name/upper" "$X/var/overlay/$name/work"
-			mount -t overlay overlay -o "lowerdir=${ro%/},upperdir=$X/var/overlay/$name/upper,workdir=$X/var/overlay/$name/work" \
-				"$X/runtimes/$name"
+		if ! mountpoint -q "$X/runtimes/$RUNTIME_NAME"; then
+			mkdir -p "$X/runtimes/$RUNTIME_NAME" "$X/var/overlay/$RUNTIME_NAME/upper" "$X/var/overlay/$RUNTIME_NAME/work"
+			mount -t overlay overlay -o "lowerdir=$(readlink -f "$RUNTIME_RO"),upperdir=$X/var/overlay/$RUNTIME_NAME/upper,workdir=$X/var/overlay/$RUNTIME_NAME/work" \
+				"$X/runtimes/$RUNTIME_NAME"
 		fi
 	) 9> "$X/var/.runtime-overlay.lock"
-done
+fi
+# XCTest's platform where agent-sim xctest and x86Sim's runner look for it
+if [ -n "${AGENT_SIM_XCTEST_PLATFORM:-}" ] && [ ! -e "$X/sdks/iPhoneSimulator.platform" ]; then
+	mkdir -p "$X/sdks"
+	ln -s "$(readlink -f "$AGENT_SIM_XCTEST_PLATFORM")" "$X/sdks/iPhoneSimulator.platform"
+fi
 python3 -I "$X/cli/libexec/mksimdevice.py" "$D" $A64_JOBS > /dev/null
 # App accessibility on, as Accessibility Inspector turns it on in Apple's simulator (and setup-vm.sh does on x86-64):
 # without it a UI test runner waits for accessibility to load and gives up ("Timed out while loading Accessibility")
@@ -112,7 +120,7 @@ LOG=$DPREFIX/private/var/tmp/com.apple.CoreSimulator.SimDevice.$UDID/launchd.log
 echo "boot-arm64: device $D ($UDID), launchd_sim's log: $LOG" >&2
 
 ENVS=$(sed 's/^/"/; s/$/"/' "$D/sim.env" | tr '\n' ' ')
-RT="/Volumes/SystemRoot$(readlink -f "$X/runtimes/ios-27.2-24B8117-arm64/RuntimeRoot")"
+RT="/Volumes/SystemRoot$(readlink -f "$X/runtimes/$RUNTIME_NAME/RuntimeRoot")"
 CMD="exec '/Volumes/SystemRoot$SIMHOST' /usr/bin/env $ENVS '$RT/sbin/launchd_sim' '/Volumes/SystemRoot$D/data/var/run/launchd_bootstrap.plist'"
 if [ -n "${1:-}" ]; then
 	exec timeout "$1" darling shell sh -c "$CMD" < /dev/null
