@@ -1,0 +1,9 @@
+load(":ios_test_runner.bzl", "ios_agent_sim_runner")
+
+exports_files(["ios_test_runner.template.sh"])
+
+# The runner for the container scripts/setup-arm64.sh sets up: `runner = "@agent_sim_rules//:ios_runner"`.
+ios_agent_sim_runner(
+    name = "ios_runner",
+    visibility = ["//visibility:public"],
+)

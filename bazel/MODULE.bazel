@@ -1,0 +1,6 @@
+"""agent-sim's test runner for rules_apple's iOS test rules (`ios_unit_test`, `ios_ui_test`): `bazel test` runs their
+bundles on an iOS simulator in an arm64 Linux container (docs/ARM64.md, docs/ARM64-ROADMAP.md M3)."""
+
+module(name = "agent_sim_rules", version = "0.1.0")
+
+bazel_dep(name = "rules_apple", version = "5.3.1", repo_name = "build_bazel_rules_apple")

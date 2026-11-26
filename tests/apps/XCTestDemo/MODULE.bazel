@@ -17,6 +17,10 @@ bazel_dep(name = "rules_swift", version = "4.2.2")
 bazel_dep(name = "rules_apple", version = "5.3.1.applecross.7", repo_name = "build_bazel_rules_apple")
 bazel_dep(name = "rules_applecross", version = "0.0.3.1f03f48")
 
+# agent-sim's test runner (this repository's bazel/): `bazel test` runs the bundles on the container's simulator.
+bazel_dep(name = "agent_sim_rules", version = "0.1.0")
+local_path_override(module_name = "agent_sim_rules", path = "../../../bazel")
+
 apple_cross_toolchain = use_extension("@rules_applecross//toolchain:extensions.bzl", "apple_cross_toolchain")
 
 # The Swift that built Xcode 27.2's SDKs.

@@ -9,6 +9,7 @@ mod phone;
 mod ring;
 mod serve;
 mod video;
+mod xctest;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -197,6 +198,32 @@ enum Command {
         bitrate: u32,
     },
     /// Time the streaming path on synthetic frames (for tuning).
+    /// Run an XCTest bundle on the phone (arm64 Linux), as `bazel test` asks a test runner to: a logic bundle, a unit
+    /// test bundle in its host app, or a UI test bundle driving its app. Exits 0 when every test passed or was skipped,
+    /// 1 when one failed, 2 when nothing ran. Waits if another test has the phone.
+    Xctest {
+        /// The test bundle: an .xctest, or the .zip rules_apple makes of one.
+        bundle: PathBuf,
+        /// The host app (unit tests) or the app under test (UI tests): an .app or an .ipa.
+        #[arg(long)]
+        app: Option<PathBuf>,
+        /// XCTEST or XCUITEST (rules_apple's test type); XCTEST without --app is a logic test.
+        #[arg(long, default_value = "XCTEST")]
+        test_type: String,
+        /// Only these tests: Target[/Class[/test]] or Class[/test] (repeatable; default: $TESTBRIDGE_TEST_ONLY,
+        /// comma-separated, which `bazel test --test_filter` sets).
+        #[arg(long = "only-testing")]
+        only: Vec<String>,
+        /// JUnit XML results (default: $XML_OUTPUT_FILE, which `bazel test` reads).
+        #[arg(long)]
+        junit: Option<PathBuf>,
+        /// Logs and results.json (default: a directory removed afterwards, copied to $TEST_UNDECLARED_OUTPUTS_DIR).
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Seconds per test target.
+        #[arg(long, default_value_t = 1800)]
+        timeout: u64,
+    },
     #[command(hide = true)]
     EncodeBench {
         #[arg(long, default_value_t = 804)]
@@ -249,6 +276,37 @@ fn main() -> Result<()> {
             phone::script("pool.sh", &a, &[])
         }
         Command::Mcp => mcp::run(&name),
+        Command::Xctest {
+            bundle,
+            app,
+            test_type,
+            mut only,
+            junit,
+            out,
+            timeout,
+        } => {
+            // the arm64 boot's phone (scripts/boot-arm64.sh) unless one is named
+            let dev = if cli.device.is_some() || std::env::var_os("AGENT_SIM_DEVICE").is_some() {
+                dev()?
+            } else {
+                xctest::default_device()?
+            };
+            if only.is_empty() {
+                if let Ok(f) = std::env::var("TESTBRIDGE_TEST_ONLY") {
+                    only = f.split(',').filter(|t| !t.is_empty()).map(str::to_string).collect();
+                }
+            }
+            let options = xctest::Options {
+                kind: xctest::kind_of(&test_type, app.is_some())?,
+                bundle,
+                app,
+                only,
+                junit: junit.or_else(|| std::env::var_os("XML_OUTPUT_FILE").map(PathBuf::from)),
+                out,
+                timeout,
+            };
+            std::process::exit(xctest::xctest(&dev, &options)?)
+        }
         Command::Up => cmd::up(&name),
         Command::Erase => cmd::erase(&name),
         Command::Appearance { mode } => say(cmd::appearance(&dev()?, &mode)),

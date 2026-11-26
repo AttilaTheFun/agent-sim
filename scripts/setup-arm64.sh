@@ -116,4 +116,8 @@ if [ -n "${XCODE_XIP:-}" ]; then
 		python3 -I "$HERE/xip-platform.py" "$XCODE_XIP" "$X/sdks" iPhoneSimulator
 fi
 
+log "agent-sim's command (its test runner for \`bazel test\`: bazel/)"
+(. "$HOME/.cargo/env" && cd "$HERE/.." && cargo build -q --release -p agent-sim)
+install -m755 "$HERE/../target/release/agent-sim" /usr/local/bin/agent-sim
+
 log "Done: boot a phone with X86SIM_ROOT=$X $HERE/boot-arm64.sh"

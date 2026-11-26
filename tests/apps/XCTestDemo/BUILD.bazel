@@ -36,6 +36,7 @@ swift_library(
 
 ios_unit_test(
     name = "XCTestDemoLogicTests",
+    runner = "@agent_sim_rules//:ios_runner",
     bundle_id = "com.x86sim.test.XCTestDemoLogicTests",
     minimum_os_version = MINIMUM_OS,
     test_host = None,
@@ -54,6 +55,7 @@ swift_library(
 
 ios_unit_test(
     name = "XCTestDemoTests",
+    runner = "@agent_sim_rules//:ios_runner",
     bundle_id = "com.x86sim.test.XCTestDemoTests",
     minimum_os_version = MINIMUM_OS,
     test_host = ":XCTestDemo",
@@ -71,6 +73,7 @@ swift_library(
 
 ios_ui_test(
     name = "XCTestDemoUITests",
+    runner = "@agent_sim_rules//:ios_runner",
     bundle_id = "com.x86sim.test.XCTestDemoUITests",
     minimum_os_version = MINIMUM_OS,
     test_host = ":XCTestDemo",

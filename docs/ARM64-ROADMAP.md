@@ -87,6 +87,27 @@ with x86Sim's runner and pass as in Xcode's simulator, with JUnit XML (docs/ARM6
 4. **Done when:** `bazel test //...` of a rules_applecross project in an arm64 container runs its iOS unit tests,
    several test targets in parallel on several phones, and Bazel's result caching works as on a Mac.
 
+The plan, in the order it lands. rules_apple's test rules expand the runner's script template with the test bundle
+(`%(test_bundle_path)s`, a `.zip`), the test host (`%(test_host_path)s`, an `.ipa`, or nothing for a logic test),
+`%(test_type)s` (`XCTEST` or `XCUITEST`), `%(test_filter)s` and `%(test_env)s`; Bazel adds `XML_OUTPUT_FILE`,
+`TESTBRIDGE_TEST_ONLY` and `TEST_UNDECLARED_OUTPUTS_DIR`.
+
+1. **`agent-sim xctest` on one phone.** A subcommand of agent-sim's CLI (Rust, as the rest of it) that takes those
+   inputs, unpacks them where the phone sees them, makes the UI runner app from Xcode's XCTRunner.app (docs/ARM64.md),
+   takes the phone (a lock, so two tests never share one), runs x86Sim's `xctest.py`, uninstalls what it installed,
+   copies the JUnit XML to `XML_OUTPUT_FILE` and logs to `TEST_UNDECLARED_OUTPUTS_DIR`, and exits 0 only if every
+   test passed or was skipped. Bazel's `--test_filter` maps to `--only-testing`.
+2. **The Bazel side.** A small module in this repository (`bazel/`): `ios_agent_sim_runner`, returning
+   `AppleTestRunnerInfo` with a template of a few lines that runs `agent-sim xctest` with the substitutions. The
+   test action runs outside Bazel's sandbox (`no-sandbox`), since the phone is a service of the container, and the
+   `agent-sim` it calls is the container's, set up with the phones. XCTestDemo's targets select it with
+   `runner =` in `tests/apps/XCTestDemo` (a BUILD file of this repository, not rules_applecross's).
+3. **Several phones.** `agent-sim pool up N` boots N arm64 phones (each its own device and Darling prefix), and
+   `agent-sim xctest` takes whichever is free, so `bazel test --local_test_jobs=N` runs N targets at once. Between
+   targets a phone is reset by uninstalling the run's apps, not rebooted.
+4. **Then:** a phone that crashes or hangs is rebooted and the target retried once; boot time and memory per phone
+   measured; the XCTestDemo targets run in CI of this repository on a Nimbus container.
+
 ### M4. UI tests
 
 Started (2026-11-25): XCTestDemo's UI tests, built on Linux by rules_applecross, pass in a container (docs/ARM64.md).
