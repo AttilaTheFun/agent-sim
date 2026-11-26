@@ -96,7 +96,7 @@ fn run(cmd: &mut Command) -> Result<std::process::ExitStatus> {
 }
 
 /// Unpacks `archive` (`.zip`, `.ipa`) into `into`, or returns a bundle given unpacked.
-fn unpack(archive: &Path, into: &Path) -> Result<PathBuf> {
+pub(crate) fn unpack(archive: &Path, into: &Path) -> Result<PathBuf> {
     if archive.is_dir() {
         return Ok(archive.to_path_buf());
     }
@@ -113,7 +113,7 @@ fn unpack(archive: &Path, into: &Path) -> Result<PathBuf> {
 }
 
 /// The one bundle with this extension in `dir` (or `dir/Payload`, as in an .ipa), or `dir` itself.
-fn find_bundle(dir: &Path, ext: &str) -> Result<PathBuf> {
+pub(crate) fn find_bundle(dir: &Path, ext: &str) -> Result<PathBuf> {
     if dir.extension() == Some(OsStr::new(ext)) {
         return Ok(dir.to_path_buf());
     }

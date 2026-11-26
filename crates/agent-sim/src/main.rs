@@ -372,16 +372,52 @@ fn main() -> Result<()> {
         Command::Scroll { direction, amount } => say(cmd::scroll(&dev()?, &direction, amount)),
         Command::Swipe { x1, y1, x2, y2, ms } => say(cmd::swipe(&dev()?, (x1, y1), (x2, y2), ms)),
         Command::Press { button } => say(cmd::press(&dev()?, &button)),
-        Command::Install { path } => say(cmd::install(&dev()?, &path)),
-        Command::Uninstall { bundle_id } => say(cmd::uninstall(&dev()?, &bundle_id)),
-        Command::Launch { bundle_id, logs } => say(cmd::launch(&dev()?, &bundle_id, logs)),
+        // a phone of the native arm64 boot (--device <its directory>) goes through x86Sim's in-device helpers
+        Command::Install { path } => {
+            let d = dev()?;
+            say(if arm64::is_native(&d) {
+                arm64::install(&d, &path)
+            } else {
+                cmd::install(&d, &path)
+            })
+        }
+        Command::Uninstall { bundle_id } => {
+            let d = dev()?;
+            say(if arm64::is_native(&d) {
+                arm64::uninstall(&d, &bundle_id)
+            } else {
+                cmd::uninstall(&d, &bundle_id)
+            })
+        }
+        Command::Launch { bundle_id, logs } => {
+            let d = dev()?;
+            say(if arm64::is_native(&d) {
+                arm64::launch(&d, &bundle_id)
+            } else {
+                cmd::launch(&d, &bundle_id, logs)
+            })
+        }
         Command::Logs {
             bundle_id,
             lines,
             grep,
         } => say(cmd::logs(&dev()?, &bundle_id, lines, grep.as_deref())),
-        Command::Terminate { bundle_id } => say(cmd::terminate(&dev()?, &bundle_id)),
-        Command::Apps { all } => say(cmd::apps(&dev()?, all)),
+        Command::Terminate { bundle_id } => {
+            let d = dev()?;
+            say(if arm64::is_native(&d) {
+                arm64::terminate(&d, &bundle_id)
+            } else {
+                cmd::terminate(&d, &bundle_id)
+            })
+        }
+        Command::Apps { all } => {
+            let d = dev()?;
+            say(if arm64::is_native(&d) {
+                arm64::apps(&d, all)
+            } else {
+                cmd::apps(&d, all)
+            })
+        }
         Command::Open { url } => say(cmd::open_url(&dev()?, &url)),
         Command::Wait {
             text,

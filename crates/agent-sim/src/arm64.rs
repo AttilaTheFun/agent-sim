@@ -200,3 +200,70 @@ pub fn status() -> Result<String> {
         .collect::<Vec<_>>()
         .join("\n"))
 }
+
+/// Whether this is a phone of the native arm64 boot (under `$X86SIM_ROOT/var`), rather than an x86Sim one.
+pub fn is_native(dev: &Device) -> bool {
+    x86sim_root()
+        .map(|x| dev.dir.starts_with(x.join("var")))
+        .unwrap_or(false)
+}
+
+/// Runs one of x86Sim's in-device helpers (`cli/libexec`) against this phone; its output, or its error.
+fn libexec(dev: &Device, program: &str, args: &[&str]) -> Result<String> {
+    let x = x86sim_root()?;
+    let tool = x.join("cli/libexec").join(program);
+    let mut cmd = if program.ends_with(".py") {
+        let mut c = Command::new("python3");
+        c.arg(&tool);
+        c
+    } else {
+        Command::new(&tool)
+    };
+    let out = cmd
+        .args(args)
+        .env("X86SIM_ROOT", &x)
+        .env("X86SIM_DEVICE", &dev.dir)
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| format!("running {}", tool.display()))?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let err = err.trim();
+        bail!("{program} {}: {}", args.join(" "), if err.is_empty() { &text } else { err });
+    }
+    Ok(text)
+}
+
+/// Installs a simulator .app, or the one in an .ipa or .zip.
+pub fn install(dev: &Device, path: &Path) -> Result<String> {
+    let work = dev
+        .dir
+        .join(format!("data/tmp/agent-sim-install/{}", std::process::id()));
+    let app = crate::xctest::find_bundle(&crate::xctest::unpack(path, &work)?, "app")?;
+    let r = libexec(dev, "appinstall.sh", &["install", &app.to_string_lossy()]);
+    let _ = std::fs::remove_dir_all(&work);
+    r
+}
+
+pub fn uninstall(dev: &Device, bundle_id: &str) -> Result<String> {
+    libexec(dev, "appinstall.sh", &["uninstall", bundle_id])
+}
+
+pub fn launch(dev: &Device, bundle_id: &str) -> Result<String> {
+    libexec(dev, "simctl.py", &["launch", bundle_id])
+}
+
+pub fn terminate(dev: &Device, bundle_id: &str) -> Result<String> {
+    libexec(dev, "simctl.py", &["terminate", bundle_id])
+}
+
+/// The installed apps: `<bundle id> <type> <name>` lines, the user's only unless `all`.
+pub fn apps(dev: &Device, all: bool) -> Result<String> {
+    let list = libexec(dev, "simctl.py", &["listapps"])?;
+    Ok(list
+        .lines()
+        .filter(|l| all || l.split_whitespace().nth(1) == Some("User"))
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
