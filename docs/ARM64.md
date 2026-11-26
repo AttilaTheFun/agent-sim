@@ -99,6 +99,18 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
 
 ## What does not work yet
 
+- **Two to three minutes to boot, every boot** (not only the first, and whatever the job list): an app's first
+  launch goes through only once FrontBoard's `FBSServiceMilestoneSystemApplicationInitialized` comes, about 140 s
+  after SpringBoard starts. SpringBoard is idle meanwhile (about 11 CPU-seconds in 150 s): BoardServices waits for a
+  listener on each service a domain declares, and some never get one here, so each wait ends at its "automatic
+  bootstrap deadline", or the extended one. backboardd's `BKHIDUISensorService` (no sensors) holds SpringBoard's
+  synchronous `requestUISensorModes:` for ~30 s (+21 s to +50 s), and nine of the `com.apple.frontboard` services in
+  SpringBoard's Info.plist (productivity-gesture, system-notes-presentation, BacklightServices.diagnostics,
+  configuration, banner-context, mitigation-session, capture-button-restriction, background-pip,
+  accessibility-window-hosting) hold the milestone until the extended deadline (+140 s). Taking them out of the
+  Info.plist does not help: SpringBoard then fails when it registers some of them itself, later. The ways out are
+  listeners for the missing services (from agent-sim's hooks) or a shorter deadline. `X86SIM_OSLOG=SpringBoard,backboardd
+  X86SIM_OSLOG_DIR=/Volumes/SystemRoot/<dir>` on the boot shows it.
 - **Not yet compared with Apple's simulator.** The home screen's widgets are blank white squares in a first boot,
   and the lock screen, speed and software rendering (`X86SIM_METAL=0`) are not checked yet.
 - **A launchd_sim crash on a first boot**, once, in a lease of the image (SIGSEGV, a new Darling prefix); the same
