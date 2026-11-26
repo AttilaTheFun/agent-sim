@@ -9,7 +9,8 @@
 #
 # Environment:
 #   WORK            where Darling, x86Sim and metal2vulkan are checked out and built (default ~)
-#   RUNTIME_BUILD   iOS runtime build from Apple's catalogue (default 24B8117, iOS 27.2)
+#   RUNTIME_BUILD   iOS runtime build from Apple's catalogue (default 24B8117, iOS 27.2); none: no runtime (an image
+#                   for CI, whose jobs fetch the runtime themselves by running this again)
 #   JOBS            parallel build jobs (default: the CPU count)
 #   XCODE_XIP       an Xcode .xip (the one the test bundles were built against: Xcode 27.2, 27B52, for
 #                   rules_applecross): its iPhoneSimulator XCTest frameworks go to $WORK/x86sim/sdks, for
@@ -96,7 +97,9 @@ fi
 	DARLING_SRC=$D "$HERE/build-simhost-arm64.sh" "$X/host/simhost/simhost.c" "$X/host/simhost/simhost-arm64"
 
 log "iOS runtime $RUNTIME_BUILD from Apple"
-if [ ! -d "$(readlink -f "$X/runtimes/"*"-$RUNTIME_BUILD-arm64/RuntimeRoot" 2>/dev/null || echo /nonexistent)" ]; then
+if [ "$RUNTIME_BUILD" = none ]; then
+	echo "skipped (RUNTIME_BUILD=none)"
+elif [ ! -d "$(readlink -f "$X/runtimes/"*"-$RUNTIME_BUILD-arm64/RuntimeRoot" 2>/dev/null || echo /nonexistent)" ]; then
 	command -v 7z > /dev/null || {
 		curl -fsSL -o "$WORK/7z.tar.xz" https://www.7-zip.org/a/7z2501-linux-arm64.tar.xz
 		mkdir -p "$WORK/7z" && tar xf "$WORK/7z.tar.xz" -C "$WORK/7z" && ln -sf "$WORK/7z/7zz" /usr/local/bin/7z

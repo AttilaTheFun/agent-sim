@@ -1,0 +1,8 @@
+# The outcomes XCTestDemo's tests are meant to have (x86Sim's sources fail and skip some on purpose); every test not
+# listed must pass. `agent-sim xctest --expect` (or `bazel test --test_env=AGENT_SIM_EXPECT=$PWD/expected.txt`)
+# passes when each test has its outcome.
+XCTestDemoLogicTests/LogicTests/testDeliberateFailure failed
+XCTestDemoTests/CalcTests/testDeliberateFailure failed
+XCTestDemoTests/CalcTests/testSkipped skipped
+XCTestDemoTests/HostTests/testDeliberateThrow failed
+XCTestDemoUITests/XCTestDemoUITests/testDeliberateUIFailure failed

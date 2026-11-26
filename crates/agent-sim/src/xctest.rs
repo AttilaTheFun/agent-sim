@@ -36,6 +36,8 @@ pub struct Options {
     pub out: Option<PathBuf>,
     /// Seconds per test target.
     pub timeout: u64,
+    /// Outcomes the tests are meant to have (`check_expected`): the exit status then says whether they had them.
+    pub expect: Option<PathBuf>,
 }
 
 /// rules_apple's `%(test_type)s` (`XCTEST`, `XCUITEST`) with or without a host app, as a kind.
@@ -279,7 +281,6 @@ pub fn xctest(named: Option<Device>, o: &Options) -> Result<i32> {
 
 /// One run of the tests on a phone this test holds.
 fn run_on(dev: &Device, o: &Options, x: &Path, runner_py: &Path, platforms: &Path) -> Result<i32> {
-
     // inside the device's data directory, which the phone's processes see
     let work = dev
         .dir
@@ -328,6 +329,10 @@ fn run_on(dev: &Device, o: &Options, x: &Path, runner_py: &Path, platforms: &Pat
         cmd.arg("--junit").arg(j);
     }
     let st = run(&mut cmd)?;
+    let code = match &o.expect {
+        Some(e) => check_expected(&out.join("results.json"), e, !o.only.is_empty())?,
+        None => st.code().unwrap_or(2),
+    };
 
     for bid in &installed {
         uninstall(x, dev, bid);
@@ -339,5 +344,141 @@ fn run_on(dev: &Device, o: &Options, x: &Path, runner_py: &Path, platforms: &Pat
     if o.out.is_none() {
         let _ = std::fs::remove_dir_all(&work);
     }
-    Ok(st.code().unwrap_or(2))
+    Ok(code)
+}
+
+/// Compares a run's results (xctest.py's results.json) with the outcomes its tests are meant to have, for test bundles
+/// whose failures are deliberate (XCTestDemo's). `expected` lists `<Target>/<Class>/<test> passed|failed|skipped`, one
+/// per line (`#` comments); every test it does not list must pass. Returns 0 when every test ran and had its outcome
+/// (and, unless a filter chose the tests, every listed test of the run's targets ran), else 1, saying what differed.
+pub fn check_expected(results: &Path, expected: &Path, filtered: bool) -> Result<i32> {
+    let text = std::fs::read_to_string(expected)
+        .with_context(|| format!("reading {}", expected.display()))?;
+    let mut want = std::collections::BTreeMap::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut f = line.split_whitespace();
+        match (f.next(), f.next(), f.next()) {
+            (Some(id), Some(r @ ("passed" | "failed" | "skipped")), None) => {
+                want.insert(id.to_string(), r.to_string());
+            }
+            _ => bail!(
+                "{}:{}: expected `<Target>/<Class>/<test> passed|failed|skipped`",
+                expected.display(),
+                n + 1
+            ),
+        }
+    }
+    let run: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(results)
+            .with_context(|| format!("reading {}", results.display()))?,
+    )
+    .with_context(|| format!("parsing {}", results.display()))?;
+    let mut wrong = Vec::new();
+    let mut checked = 0;
+    let targets = run["targets"].as_array().cloned().unwrap_or_default();
+    if targets.is_empty() {
+        wrong.push("no test target ran".to_string());
+    }
+    for t in &targets {
+        let target = t["name"].as_str().unwrap_or("?");
+        let tests = t["tests"].as_array().cloned().unwrap_or_default();
+        if tests.is_empty() {
+            let why = t["error"].as_str().unwrap_or("no test ran");
+            wrong.push(format!("{target}: {why}"));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for test in &tests {
+            let id = format!("{target}/{}", test["identifier"].as_str().unwrap_or("?"));
+            let got = test["result"].as_str().unwrap_or("?");
+            let meant = want.get(&id).map(String::as_str).unwrap_or("passed");
+            if got != meant {
+                wrong.push(format!("{id}: {got}, meant to have {meant}"));
+            }
+            checked += 1;
+            seen.insert(id);
+        }
+        if !filtered {
+            let prefix = format!("{target}/");
+            for id in want
+                .keys()
+                .filter(|k| k.starts_with(&prefix) && !seen.contains(*k))
+            {
+                wrong.push(format!("{id}: did not run"));
+            }
+        }
+    }
+    if wrong.is_empty() {
+        println!(
+            "agent-sim xctest: all {checked} tests had the outcomes {} lists",
+            expected.display()
+        );
+        return Ok(0);
+    }
+    for w in &wrong {
+        eprintln!("agent-sim xctest: {w}");
+    }
+    eprintln!(
+        "agent-sim xctest: {} of the outcomes differ from {}",
+        wrong.len(),
+        expected.display()
+    );
+    Ok(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_expected;
+    use std::path::PathBuf;
+
+    fn files(name: &str, results: &str, expected: &str) -> (PathBuf, PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("agent-sim-expect-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("results.json"), results).unwrap();
+        std::fs::write(dir.join("expected.txt"), expected).unwrap();
+        (dir.join("results.json"), dir.join("expected.txt"))
+    }
+
+    const RUN: &str = r#"{"targets": [{"name": "T", "result": "failed", "tests": [
+        {"identifier": "C/testOk", "result": "passed"},
+        {"identifier": "C/testBad", "result": "failed"},
+        {"identifier": "C/testSkip", "result": "skipped"}]}]}"#;
+
+    #[test]
+    fn deliberate_outcomes_pass() {
+        let (r, e) = files(
+            "ok",
+            RUN,
+            "# meant\nT/C/testBad failed\nT/C/testSkip skipped\n",
+        );
+        assert_eq!(check_expected(&r, &e, false).unwrap(), 0);
+    }
+
+    #[test]
+    fn an_unexpected_failure_or_a_missing_test_fails() {
+        let (r, e) = files("bad", RUN, "T/C/testSkip skipped\n");
+        assert_eq!(check_expected(&r, &e, false).unwrap(), 1);
+        let (r, e) = files(
+            "missing",
+            RUN,
+            "T/C/testBad failed\nT/C/testSkip skipped\nT/C/testGone failed\n",
+        );
+        assert_eq!(check_expected(&r, &e, false).unwrap(), 1);
+        // a filter chose the tests: a listed test that did not run is not missing
+        assert_eq!(check_expected(&r, &e, true).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_target_that_ran_nothing_fails() {
+        let (r, e) = files(
+            "empty",
+            r#"{"targets": [{"name": "T", "tests": [], "error": "the device did not answer"}]}"#,
+            "",
+        );
+        assert_eq!(check_expected(&r, &e, false).unwrap(), 1);
+    }
 }

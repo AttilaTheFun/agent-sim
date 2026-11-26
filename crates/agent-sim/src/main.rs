@@ -223,6 +223,11 @@ enum Command {
         /// Seconds per test target.
         #[arg(long, default_value_t = 1800)]
         timeout: u64,
+        /// The outcomes the tests are meant to have, for bundles with deliberate failures: lines of
+        /// `<Target>/<Class>/<test> passed|failed|skipped`, every test not listed passing. The exit status then says
+        /// whether they had them (0) or not (1). Default: $AGENT_SIM_EXPECT (`bazel test --test_env=AGENT_SIM_EXPECT=`).
+        #[arg(long, env = "AGENT_SIM_EXPECT")]
+        expect: Option<PathBuf>,
     },
     #[command(hide = true)]
     EncodeBench {
@@ -284,6 +289,7 @@ fn main() -> Result<()> {
             junit,
             out,
             timeout,
+            expect,
         } => {
             // whichever of the arm64 boot's phones (scripts/boot-arm64.sh) is free, unless one is named
             let named = if cli.device.is_some() || std::env::var_os("AGENT_SIM_DEVICE").is_some() {
@@ -308,6 +314,7 @@ fn main() -> Result<()> {
                 junit: junit.or_else(|| std::env::var_os("XML_OUTPUT_FILE").map(PathBuf::from)),
                 out,
                 timeout,
+                expect,
             };
             std::process::exit(xctest::xctest(named, &options)?)
         }
