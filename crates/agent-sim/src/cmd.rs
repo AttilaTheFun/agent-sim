@@ -230,11 +230,15 @@ pub fn scroll(dev: &Device, dir: &str, amount: f64) -> Result<String> {
 /// Types into the field that has focus. The app inserts the text as the software keyboard does, which every field
 /// takes (web fields lost most hardware key events); with no field in focus, or `keys`, it goes as key presses.
 pub fn type_text(dev: &Device, text: &str, keys: bool) -> Result<String> {
-    if !keys && insert_text(dev, text)? {
+    // a phone of the native arm64 boot has no agent-sim hook in its apps yet: key presses only
+    let native = crate::arm64::is_native(dev);
+    if !keys && !native && insert_text(dev, text)? {
         return Ok(format!("typed {} characters", text.chars().count()));
     }
     if text.chars().all(|c| crate::input::key_usage(c).is_some()) {
         hid(dev).text(text)?;
+    } else if native {
+        bail!("on an arm64 phone only characters with a key of their own can be typed yet");
     } else {
         // characters without a key of their own go through x86Sim's typing
         phone::x86sim_ok(dev, &["type", text])?;
