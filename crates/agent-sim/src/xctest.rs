@@ -5,6 +5,7 @@
 //! test runner app as Xcode does, holds the phone so two tests never share it, cleans up after and hands the results
 //! to Bazel (`XML_OUTPUT_FILE`, `TEST_UNDECLARED_OUTPUTS_DIR`). docs/ARM64.md, docs/ARM64-ROADMAP.md (M3).
 
+use crate::arm64::{running_phones, x86sim_root};
 use crate::device::Device;
 use anyhow::{Context, Result, bail};
 use std::ffi::OsStr;
@@ -49,49 +50,6 @@ pub fn kind_of(test_type: &str, has_app: bool) -> Result<Kind> {
         "HOSTED" => Ok(Kind::Hosted),
         t => bail!("unknown test type {t} (XCTEST or XCUITEST)"),
     }
-}
-
-/// x86Sim's checkout the arm64 phone runs from: `$X86SIM_ROOT`, else `~/x86sim` (scripts/setup-arm64.sh).
-fn x86sim_root() -> Result<PathBuf> {
-    if let Some(d) = std::env::var_os("X86SIM_ROOT") {
-        return Ok(PathBuf::from(d));
-    }
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home).join("x86sim"))
-}
-
-/// The arm64 phones that run (scripts/boot-arm64.sh: `device-a64`, and `device-a64-<n>` for A64_PHONE=<n>): those
-/// whose launchd_sim is up, found by its bootstrap plist on the command line.
-fn running_phones() -> Result<Vec<Device>> {
-    let var = x86sim_root()?.join("var");
-    let mut cmdlines = Vec::new();
-    for e in std::fs::read_dir("/proc")?.flatten() {
-        if let Ok(c) = std::fs::read(e.path().join("cmdline")) {
-            if c.windows(11).any(|w| w == b"launchd_sim") {
-                cmdlines.push(String::from_utf8_lossy(&c).replace('\0', " "));
-            }
-        }
-    }
-    let mut phones = Vec::new();
-    let Ok(rd) = std::fs::read_dir(&var) else {
-        return Ok(phones);
-    };
-    let mut dirs: Vec<PathBuf> = rd
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            let n = p.file_name().unwrap_or_default().to_string_lossy();
-            n == "device-a64" || n.starts_with("device-a64-")
-        })
-        .collect();
-    dirs.sort();
-    for d in dirs {
-        let plist = format!("{}/data/var/run/launchd_bootstrap.plist", d.display());
-        if d.join("sim.env").is_file() && cmdlines.iter().any(|c| c.contains(&plist)) {
-            phones.push(Device { dir: d });
-        }
-    }
-    Ok(phones)
 }
 
 /// Locks a phone for this test, without waiting: None if another test has it.

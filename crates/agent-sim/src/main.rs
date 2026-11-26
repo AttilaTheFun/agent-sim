@@ -1,3 +1,4 @@
+mod arm64;
 mod ax;
 mod cmd;
 mod device;
@@ -198,6 +199,18 @@ enum Command {
         bitrate: u32,
     },
     /// Time the streaming path on synthetic frames (for tuning).
+    /// The arm64 phones (scripts/boot-arm64.sh): `up N` boots phones 1 to N that do not run and waits until each can
+    /// run tests; `status` lists those that run.
+    Phones {
+        #[arg(value_parser = ["up", "status"])]
+        action: String,
+        /// How many phones (up).
+        #[arg(default_value_t = 1)]
+        count: usize,
+        /// Seconds to wait for them.
+        #[arg(long, default_value_t = 900)]
+        timeout: u64,
+    },
     /// Run an XCTest bundle on the phone (arm64 Linux), as `bazel test` asks a test runner to: a logic bundle, a unit
     /// test bundle in its host app, or a UI test bundle driving its app. Exits 0 when every test passed or was skipped,
     /// 1 when one failed, 2 when nothing ran. Takes whichever booted phone is free (or --device), waiting if none is.
@@ -281,6 +294,14 @@ fn main() -> Result<()> {
             phone::script("pool.sh", &a, &[])
         }
         Command::Mcp => mcp::run(&name),
+        Command::Phones {
+            action,
+            count,
+            timeout,
+        } => say(match action.as_str() {
+            "up" => arm64::up(count, Duration::from_secs(timeout)),
+            _ => arm64::status(),
+        }),
         Command::Xctest {
             bundle,
             app,
