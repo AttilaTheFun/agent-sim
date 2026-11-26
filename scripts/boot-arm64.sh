@@ -77,6 +77,23 @@ if [ "${X86SIM_AUDIO_SOCKET:-}" != none ]; then
 	(X86SIM_AUDIO_PLAYBACK=${X86SIM_AUDIO_PLAYBACK:-0} setsid python3 "$X/cli/libexec/simaudio.py" "$X86SIM_AUDIO_SOCKET" \
 		> "$ST/simaudio.log" 2>&1 < /dev/null & echo $! > "$ST/simaudio.pid")
 fi
+# A runtime on a read-only volume (Nimbus' ios leases mount Apple's at $X86SIM_ROOT/runtimes-ro/<runtime>): x86Sim
+# writes each device's launch angels into the runtime's own LaunchAngels directory (launchd_sim takes a job as an angel
+# only from there), so the runtime is an overlay, the volume below and this machine's writes above. Once per machine,
+# whichever phone boots first.
+mkdir -p "$X/var"
+for ro in "$X"/runtimes-ro/*/; do
+	[ -d "$ro" ] || continue
+	name=$(basename "$ro")
+	(
+		flock 9
+		if ! mountpoint -q "$X/runtimes/$name"; then
+			mkdir -p "$X/runtimes/$name" "$X/var/overlay/$name/upper" "$X/var/overlay/$name/work"
+			mount -t overlay overlay -o "lowerdir=${ro%/},upperdir=$X/var/overlay/$name/upper,workdir=$X/var/overlay/$name/work" \
+				"$X/runtimes/$name"
+		fi
+	) 9> "$X/var/.runtime-overlay.lock"
+done
 python3 -I "$X/cli/libexec/mksimdevice.py" "$D" $A64_JOBS > /dev/null
 # App accessibility on, as Accessibility Inspector turns it on in Apple's simulator (and setup-vm.sh does on x86-64):
 # without it a UI test runner waits for accessibility to load and gives up ("Timed out while loading Accessibility")
