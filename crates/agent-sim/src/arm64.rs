@@ -59,7 +59,7 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 /// The phone's simulator UDID (its sim.env), which its processes carry as SIMULATOR_UDID.
-fn udid(dev: &Device) -> Option<String> {
+pub fn udid(dev: &Device) -> Option<String> {
     let env = std::fs::read_to_string(dev.dir.join("sim.env")).ok()?;
     env.lines()
         .find_map(|l| l.strip_prefix("SIMULATOR_UDID="))
@@ -106,71 +106,90 @@ fn device_dir(x: &Path, n: usize) -> PathBuf {
     }
 }
 
-/// Boots phones 1 to `count` that do not run (scripts/boot-arm64.sh, in the background, its output in
-/// `<x86Sim>/var/boot-<device>.log`), then waits until each can run tests: launchd_sim up and SpringBoard running for
-/// READY_SECS.
-pub fn up(count: usize, timeout: Duration) -> Result<String> {
-    if count == 0 {
-        bail!("no phones asked for");
+/// The phone's number: 1 for `device-a64`, n for `device-a64-<n>`.
+pub fn number(dev: &Device) -> Option<usize> {
+    let name = dev.dir.file_name()?.to_string_lossy().to_string();
+    if name == "device-a64" {
+        return Some(1);
     }
+    name.strip_prefix("device-a64-")?.parse().ok()
+}
+
+/// The phone with this number, whether it exists yet or not.
+pub fn phone(n: usize) -> Result<Device> {
+    Ok(Device {
+        dir: device_dir(&x86sim_root()?, n),
+    })
+}
+
+/// Starts phone `n` (scripts/boot-arm64.sh in the background, its output in `<x86Sim>/var/boot-<device>.log`) unless
+/// it runs already.
+pub fn start(n: usize) -> Result<()> {
     let x = x86sim_root()?;
+    let dir = device_dir(&x, n);
+    if running_phones()?.iter().any(|p| p.dir == dir) {
+        return Ok(());
+    }
     let boot = crate::phone::scripts()?.join("boot-arm64.sh");
     if !boot.is_file() {
         bail!("no {}", boot.display());
     }
-    let running = running_phones()?;
-    for n in 1..=count {
-        let dir = device_dir(&x, n);
-        if running.iter().any(|p| p.dir == dir) {
-            continue;
-        }
-        let name = dir.file_name().unwrap_or_default().to_string_lossy().to_string();
-        let log_path = x.join(format!("var/boot-{name}.log"));
-        std::fs::create_dir_all(x.join("var"))?;
-        let log = File::create(&log_path).with_context(|| format!("creating {}", log_path.display()))?;
-        let mut cmd = Command::new(&boot);
-        cmd.env("X86SIM_ROOT", &x)
-            .stdin(Stdio::null())
-            .stdout(log.try_clone()?)
-            .stderr(log);
-        if n > 1 {
-            cmd.env("A64_PHONE", n.to_string());
-        }
-        // a process group of its own: the phone outlives this command
-        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-        cmd.spawn()
-            .with_context(|| format!("starting {}", boot.display()))?;
-        eprintln!("agent-sim phones: booting {name} (log: {})", log_path.display());
+    let name = dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+    std::fs::create_dir_all(x.join("var"))?;
+    let log_path = x.join(format!("var/boot-{name}.log"));
+    let log = File::create(&log_path).with_context(|| format!("creating {}", log_path.display()))?;
+    let mut cmd = Command::new(&boot);
+    cmd.env("X86SIM_ROOT", &x)
+        .stdin(Stdio::null())
+        .stdout(log.try_clone()?)
+        .stderr(log);
+    if n > 1 {
+        cmd.env("A64_PHONE", n.to_string());
     }
+    // a process group of its own: the phone outlives this command
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    cmd.spawn()
+        .with_context(|| format!("starting {}", boot.display()))?;
+    eprintln!("agent-sim phones: booting {name} (log: {})", log_path.display());
+    Ok(())
+}
+
+/// Waits until phones `ns` can run tests (launchd_sim up, SpringBoard running for READY_SECS), attaching each one's
+/// keyboard once it is.
+pub fn wait_ready(ns: &[usize], timeout: Duration) -> Result<()> {
+    let x = x86sim_root()?;
     let start = Instant::now();
-    let mut ready = vec![false; count];
+    let mut ready = vec![false; ns.len()];
     loop {
         let running = running_phones()?;
-        for n in 1..=count {
-            if ready[n - 1] {
+        for (i, &n) in ns.iter().enumerate() {
+            if ready[i] {
                 continue;
             }
-            let dir = device_dir(&x, n);
-            let up = running.iter().any(|p| p.dir == dir);
-            let dev = Device { dir: dir.clone() };
+            let dev = Device {
+                dir: device_dir(&x, n),
+            };
+            let up = running.iter().any(|p| p.dir == dev.dir);
             let secs = udid(&dev).and_then(|u| springboard_secs(&u)).unwrap_or(0);
             if up && secs >= READY_SECS {
-                ready[n - 1] = true;
+                ready[i] = true;
                 warm_keyboard(&dev);
                 eprintln!(
                     "agent-sim phones: {} ready after {} s",
-                    dir.file_name().unwrap_or_default().to_string_lossy(),
+                    dev.dir.file_name().unwrap_or_default().to_string_lossy(),
                     start.elapsed().as_secs()
                 );
             }
         }
         if ready.iter().all(|r| *r) {
-            return Ok(format!("{count} phone(s) ready"));
+            return Ok(());
         }
         if start.elapsed() > timeout {
-            let late: Vec<String> = (1..=count)
-                .filter(|n| !ready[n - 1])
-                .map(|n| device_dir(&x, n).display().to_string())
+            let late: Vec<String> = ns
+                .iter()
+                .zip(&ready)
+                .filter(|(_, r)| !**r)
+                .map(|(n, _)| device_dir(&x, *n).display().to_string())
                 .collect();
             bail!(
                 "not ready after {} s: {} (see <x86Sim>/var/boot-<device>.log)",
@@ -180,6 +199,53 @@ pub fn up(count: usize, timeout: Duration) -> Result<String> {
         }
         std::thread::sleep(Duration::from_secs(5));
     }
+}
+
+/// Stops phone `n`: its Darling server (every process of the phone goes with it), and the Metal and audio servers its
+/// boot started.
+pub fn stop(n: usize) -> Result<()> {
+    let x = x86sim_root()?;
+    let home = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
+    let prefix = if n == 1 {
+        home.join(".darling")
+    } else {
+        home.join(format!(".darling-{n}"))
+    };
+    let state = if n == 1 {
+        x.join("var/run")
+    } else {
+        x.join(format!("var/run-{n}"))
+    };
+    let server = format!("darlingserver {} ", prefix.display());
+    let state = format!("{}/", state.display());
+    for e in std::fs::read_dir("/proc")?.flatten() {
+        let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let Ok(c) = std::fs::read(e.path().join("cmdline")) else {
+            continue;
+        };
+        let cmd = String::from_utf8_lossy(&c).replace('\0', " ");
+        let ours = cmd.starts_with(&server)
+            || ((cmd.contains("mtlvk") || cmd.contains("simaudio.py")) && cmd.contains(&state));
+        if ours {
+            let _ = crate::phone::signal(pid, libc::SIGKILL);
+        }
+    }
+    Ok(())
+}
+
+/// Boots phones 1 to `count` that do not run (scripts/boot-arm64.sh, in the background), then waits until each can
+/// run tests.
+pub fn up(count: usize, timeout: Duration) -> Result<String> {
+    if count == 0 {
+        bail!("no phones asked for");
+    }
+    for n in 1..=count {
+        start(n)?;
+    }
+    wait_ready(&(1..=count).collect::<Vec<_>>(), timeout)?;
+    Ok(format!("{count} phone(s) ready"))
 }
 
 /// Attaches the phone's keyboard once, with a Shift press, before anything is typed: the first attach of a boot switches
@@ -219,7 +285,7 @@ pub fn is_native(dev: &Device) -> bool {
 }
 
 /// Runs one of x86Sim's in-device helpers (`cli/libexec`) against this phone; its output, or its error.
-fn libexec(dev: &Device, program: &str, args: &[&str]) -> Result<String> {
+pub fn libexec(dev: &Device, program: &str, args: &[&str]) -> Result<String> {
     let x = x86sim_root()?;
     let tool = x.join("cli/libexec").join(program);
     let mut cmd = if program.ends_with(".py") {

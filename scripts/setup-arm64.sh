@@ -139,6 +139,8 @@ log "agent-sim's command (its test runner for \`bazel test\`: bazel/) and Bazel"
 (. "$HOME/.cargo/env" && cd "$HERE/.." && cargo build -q --release -p agent-sim)
 # a link, so the command finds this checkout's scripts (agent-sim phones up boots with scripts/boot-arm64.sh)
 ln -sf "$(cd "$HERE/.." && pwd)/target/release/agent-sim" /usr/local/bin/agent-sim
+# xcrun simctl for scripts written for a Mac (agent-sim simctl)
+ln -sf /usr/local/bin/agent-sim /usr/local/bin/xcrun
 # Bazel (bazelisk, which fetches the version a workspace's .bazelversion names), for `bazel test` of iOS test targets
 command -v bazel > /dev/null || {
 	curl -fsSL -o /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/latest/download/bazelisk-linux-arm64

@@ -9,6 +9,7 @@ mod mcp;
 mod phone;
 mod ring;
 mod serve;
+mod simctl;
 mod video;
 mod xctest;
 
@@ -199,6 +200,14 @@ enum Command {
         bitrate: u32,
     },
     /// Time the streaming path on synthetic frames (for tuning).
+    /// Xcode's `xcrun simctl`, for the arm64 phones: what CI scripts and Isomer's iOS launcher use (list, create, boot,
+    /// bootstatus, shutdown, delete, install, uninstall, launch, terminate, get_app_container, spawn, io screenshot,
+    /// keychain reset, ui appearance). Run as `xcrun`, agent-sim is `xcrun simctl`.
+    #[command(disable_help_flag = true)]
+    Simctl {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// The arm64 phones (scripts/boot-arm64.sh): `up N` boots phones 1 to N that do not run and waits until each can
     /// run tests; `status` lists those that run.
     Phones {
@@ -277,6 +286,22 @@ fn main() -> Result<()> {
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
+    // a link named xcrun: Xcode's `xcrun simctl ...`, for scripts written for a Mac
+    let mut argv: Vec<String> = std::env::args().collect();
+    if argv.first().and_then(|a| a.rsplit('/').next()) == Some("xcrun") {
+        if argv.get(1).map(String::as_str) != Some("simctl") {
+            eprintln!("xcrun: only simctl here (agent-sim's iOS simulator on Linux)");
+            std::process::exit(72);
+        }
+        argv.drain(..2);
+        match simctl::run(&argv) {
+            Ok(code) => std::process::exit(code),
+            Err(e) => {
+                eprintln!("An error was encountered processing the command: {e:#}");
+                std::process::exit(1);
+            }
+        }
+    }
     let cli = Cli::parse();
     let name = phone::pick_device(cli.device.as_deref());
     let dev = || device::Device::find(&name);
@@ -294,6 +319,7 @@ fn main() -> Result<()> {
             phone::script("pool.sh", &a, &[])
         }
         Command::Mcp => mcp::run(&name),
+        Command::Simctl { args } => std::process::exit(simctl::run(&args)?),
         Command::Phones {
             action,
             count,
