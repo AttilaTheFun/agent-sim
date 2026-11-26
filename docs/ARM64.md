@@ -89,12 +89,17 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   `a3b68f7f…c695` (29 MB).
 - **Driving a phone from outside** (Nimbus' driver): `agent-sim --device <device dir> install <.app|.ipa>`,
   `uninstall`, `launch`, `terminate`, `apps` (x86Sim's in-device helpers underneath) and `screenshot -o out.png` (the
-  frame ring). An app's first launch can take up to a minute to draw its first frame. Tap, swipe and type are next.
+  frame ring), and `tap <x> <y>` (screen points: a tapped button acts, a tapped field takes focus and brings up the
+  keyboard) and `swipe`, through x86Sim's simhid. An app's first launch can take up to a minute to draw its first
+  frame. Not yet: key presses (`type`) and buttons (`press home`) reach simhid but not the app or SpringBoard, and
+  tapping by element or text needs agent-sim's accessibility hook, which arm64 apps do not load yet.
 
 ## What does not work yet
 
 - **Not yet compared with Apple's simulator.** The home screen's widgets are blank white squares in a first boot,
   and the lock screen, speed and software rendering (`X86SIM_METAL=0`) are not checked yet.
+- **A launchd_sim crash on a first boot**, once, in a lease of the image (SIGSEGV, a new Darling prefix); the same
+  image, runtime archive and read-only overlay booted fine twice after.
 - **An app crash on a first boot.** In two of about seventeen runs of XCTestDemo's UI tests, both on a phone booted
   for the first time with a new Darling prefix while another phone ran tests, the app died (SIGSEGV) or did not show
   its text field in 30 s; on that phone's next boot, ten more runs passed. Not yet caught with a core.
