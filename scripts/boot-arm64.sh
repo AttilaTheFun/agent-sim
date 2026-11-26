@@ -8,7 +8,7 @@
 #
 # Env: X86SIM_ROOT (an x86Sim checkout with the runtime fetched; default ~/x86sim), A64_DEVICE (default
 # $X86SIM_ROOT/var/device-a64), A64_PHONE (<n>: another phone, device-a64-<n> with its own Darling prefix
-# ~/.darling-<n>), A64_JOBS (default: boot-a64.sh's slim list, MIN + UI_SLIM), DPREFIX (Darling prefix, default
+# ~/.darling-<n>), A64_JOBS (the launchd jobs; default A64_JOB_LIST's: slim, or std), DPREFIX (Darling prefix, default
 # ~/.darling), X86SIM_METAL (default all: Metal for every process through x86Sim's metalhostd and mtlvk, built for
 # arm64 by scripts/build-mtlvk-arm64.sh; 0 = none, and backboardd then draws nothing). Frames go to simfb's ring
 # (SIMFB_RING in sim.env; x86Sim's cli/libexec/fb2png.py makes a PNG of the newest).
@@ -30,15 +30,20 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SIMHOST=$X/host/simhost/simhost-arm64
 [ -x "$SIMHOST" ] || "$HERE/build-simhost-arm64.sh" "$X/host/simhost/simhost.c" "$SIMHOST"
 
-# boot-a64.sh's job list for A64_JOBS=std (its default; slim: MIN + UI_SLIM): MIN + UI, backboardd, SpringBoard and
-# PosterBoard among them
+# The phone's launchd jobs: A64_JOB_LIST=slim (the default) is boot-a64.sh's MIN + UI_SLIM (backboardd, SpringBoard,
+# the keyboard, assistantd, sleepd) and what installing apps and testing them needs: installcoordinationd (installs)
+# and pasted (the pasteboard): 35 of Apple's jobs. A phone running Visor's app takes ~2.6 GB (PSS) instead of ~3.2 GB with
+# std (MIN + UI, 107: homed, locationd, sharingd, passd, the Siri daemons, PosterBoard and the rest), and its
+# pictures are the same.
 if [ -z "${A64_JOBS:-}" ]; then
-	A64_JOBS=$(python3 -I - "$X/cli/libexec/arm64/boot-a64.sh" "${A64_JOB_LIST:-std}" <<-'PY'
+	A64_JOBS=$(python3 -I - "$X/cli/libexec/arm64/boot-a64.sh" "${A64_JOB_LIST:-slim}" <<-'PY'
 	import re, sys
 	s = open(sys.argv[1]).read()
 	jobs = []
 	for name in ("MIN", "UI_SLIM" if sys.argv[2] == "slim" else "UI"):
 	    jobs += re.search(r'^%s="(.*?)"' % name, s, re.S | re.M).group(1).split()
+	if sys.argv[2] == "slim":
+	    jobs += ["com.apple.installcoordinationd", "com.apple.pasteboard.pasted"]
 	print(" ".join(jobs))
 	PY
 	)

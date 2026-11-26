@@ -86,7 +86,8 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   `iPhoneSimulator.platform/`: `tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner --format=posix
   --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime -cf - <dirs> | zstd -10 -T0` (zstd 1.5's output
   does not depend on its thread count). For 24B8117 and Xcode 27.2 (27B52): sha256 `75153dce…95b4` (7.8 GB) and
-  `a3b68f7f…c695` (29 MB).
+  `03cf1e5a…8026` (35 MB; an earlier `a3b68f7f…c695`, 29 MB, was made before `xip-platform.py` kept hard-linked
+  files whole, and has Xcode's placeholders in place of some SDK headers).
 - **Driving a phone from outside** (Nimbus' driver): `agent-sim --device <device dir> install <.app|.ipa>`,
   `uninstall`, `launch`, `terminate`, `apps` (x86Sim's in-device helpers underneath) and `screenshot -o out.png` (the
   frame ring), `tap <x> <y>` (screen points), `swipe`, `type <text>` (key presses of a hardware keyboard) and

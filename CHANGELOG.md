@@ -19,6 +19,11 @@
   narrow space its "AM" left), cellular and Wi-Fi bars and modes, the operator and the battery's level and state.
 - `simctl boot` then `bootstatus -b` boots a phone once, and `shutdown` returns once the phone is gone. Phones are
   found from the account's home directory, not `$HOME`, which `bazel test` changes.
+- Phones boot x86Sim's slim job list by default (plus installcoordinationd and pasted): 35 of Apple's launchd jobs
+  instead of 107, ~2.6 GB per phone running an app instead of ~3.2 GB, the same pictures and test results.
+  `A64_JOB_LIST=std` boots the full list.
+- `setup-arm64.sh` pins every download by version and SHA-256 (rustup-init and Rust, 7-Zip, ipsw, bazelisk), and
+  builds on Ubuntu 26.04 too.
 - `hooks/build.sh` builds the hooks on Linux too (Swift's clang, the MacOSX SDK from Xcode's .xip, LLVM's ld64.lld).
 - Web pages no longer stay blank, and `open` brings Safari up after it was quit: reading the screen sent SIGUSR2 to
   processes still starting, which ended them; now only processes whose hook is ready are asked.
