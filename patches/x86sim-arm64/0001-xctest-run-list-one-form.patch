@@ -1,0 +1,31 @@
+xctest.py: a test chosen with --only-testing in the run list in one form, so XCTest runs it once
+
+test_identifiers() gives a method in two forms, Objective-C style and Swift style, for the skip list's sake (a test
+is skipped only by the form of its own name). In the run list XCTest ran the test once for each form that named it,
+so every chosen test ran twice. The run list now takes the first form alone, as Apple's -only-testing: archives
+"Class/method"; it names Swift tests too (XCTestDemo's UI test, VisorProbe's: each ran once).
+
+diff --git a/cli/libexec/xctest.py b/cli/libexec/xctest.py
+index 1da7fda..079a457 100755
+--- a/cli/libexec/xctest.py
++++ b/cli/libexec/xctest.py
+@@ -149,14 +149,16 @@ def test_identifiers(s):
+     return [Obj(["XCTTestIdentifier", "NSObject"], {"a": None, "c": parts, "o": 3, "oc": True, "ocm": True})]
+ 
+ 
+-def identifier_set(ids):
+-    return Obj(["XCTTestIdentifierSet", "NSObject"], {"identifiers": [i for x in ids for i in test_identifiers(x)]})
++def identifier_set(ids, run=False):
++    # the run list in one form, as Apple's own -only-testing: XCTest runs a test once for each identifier that names it
++    return Obj(["XCTTestIdentifierSet", "NSObject"],
++               {"identifiers": [i for x in ids for i in (test_identifiers(x)[:1] if run else test_identifiers(x))]})
+ 
+ 
+ def configuration(bundle, module, target_path=None, target_bid=None, target_args=(), target_env=None, ui=False,
+                   only=None, skip=()):
+     sel = Obj(["XCTTestSelection", "NSObject"], {
+-        "IdentifiersToRun": identifier_set(only) if only else None, "IdentifiersToSkip": identifier_set(skip),
++        "IdentifiersToRun": identifier_set(only, run=True) if only else None, "IdentifiersToSkip": identifier_set(skip),
+         "TagsToRun": None,
+         "TagsToSkip": Obj(["XCTTagSelection", "NSObject"], {"XCTTagSelectionIncludeXCTests": False,
+                                                           "XCTTagSelectionMode": 1, "XCTTagSelectionTagSet": set()})})

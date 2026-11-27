@@ -116,6 +116,11 @@ if [ ! -d "$X/.git" ]; then
 	git clone -q https://github.com/x86sim/x86sim.git "$X"
 	git -C "$X" checkout -q "$(base x86sim/x86sim)"
 fi
+# agent-sim's fixes to x86Sim's own scripts for the arm64 boot (patches/x86sim-arm64), each applied once
+for p in "$HERE/../patches/x86sim-arm64"/*.patch; do
+	[ -e "$p" ] || continue
+	git -C "$X" apply --reverse --check "$p" 2>/dev/null || git -C "$X" apply "$p" || die "$(basename "$p") does not apply to x86Sim"
+done
 if [ ! -d "$X/external/metal2vulkan/crates" ]; then
 	git clone -q -b x86sim https://github.com/x86sim/metal2vulkan.git "$WORK/metal2vulkan"
 	git -C "$WORK/metal2vulkan" checkout -q "$(x86base x86sim/metal2vulkan)"

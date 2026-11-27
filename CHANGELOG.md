@@ -26,6 +26,8 @@
   runtime is untouched): SpringBoard starts them whatever the job list. An idle phone takes ~1.6 GB (37 processes),
   from ~2.0 GB. The home screen's wallpaper is black and its two widgets blank, as before. `AGENT_SIM_HIDE_POSTERS=0`
   keeps them.
+- A test chosen with `--only-testing` (or `bazel test --test_filter`) runs once, not twice: x86Sim's run list named
+  each test in two forms (patches/x86sim-arm64, which setup-arm64.sh applies).
 - `phones up` returns once the phone takes an app launch (Settings, launched and closed again) and has spent the first
   touch of the boot, which was dropped: ready 3-4 minutes after boot, with taps showing in about a second.
 - `setup-arm64.sh` pins every download by version and SHA-256 (rustup-init and Rust, 7-Zip, ipsw, bazelisk), and
