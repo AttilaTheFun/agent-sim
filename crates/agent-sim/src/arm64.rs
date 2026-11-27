@@ -259,12 +259,41 @@ pub fn start(n: usize) -> Result<()> {
     Ok(())
 }
 
+/// How many times `wait_ready` boots a phone again whose boot died.
+const MAX_REBOOTS: u32 = 2;
+
+/// Why phone `n`'s boot died, if it did: simhost saw launchd_sim killed (a SIGSEGV at the start of a boot, now and
+/// then: Visor's proof, 2026-11-27), or the boot script that `start` ran is gone. A phone booted some other way (no
+/// pid file) is never taken for dead.
+fn boot_died(x: &Path, n: usize) -> Option<String> {
+    let dir = device_dir(x, n);
+    let name = dir.file_name()?.to_string_lossy().to_string();
+    let log = std::fs::read_to_string(x.join(format!("var/boot-{name}.log"))).unwrap_or_default();
+    if let Some(l) = log
+        .lines()
+        .find(|l| l.contains("launchd_sim killed by signal"))
+    {
+        return Some(l.trim().to_string());
+    }
+    if boot_pid_file(x, &name).is_file() && boot_pid(x, &name).is_none() {
+        let last = log
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("");
+        return Some(format!("its boot script exited: {}", last.trim()));
+    }
+    None
+}
+
 /// Waits until phones `ns` can run tests (launchd_sim up, and SpringBoard launching apps: `takes_launches`), attaching each one's
-/// keyboard once it is.
+/// keyboard once it is. A phone whose boot dies is stopped and booted again, up to `MAX_REBOOTS` times, rather than
+/// waited on until `timeout`.
 pub fn wait_ready(ns: &[usize], timeout: Duration) -> Result<()> {
     let x = x86sim_root()?;
     let start = Instant::now();
     let mut ready = vec![false; ns.len()];
+    let mut reboots = vec![0; ns.len()];
     loop {
         let running = running_phones()?;
         for (i, &n) in ns.iter().enumerate() {
@@ -275,6 +304,30 @@ pub fn wait_ready(ns: &[usize], timeout: Duration) -> Result<()> {
                 dir: device_dir(&x, n),
             };
             let up = running.iter().any(|p| p.dir == dev.dir);
+            if !up {
+                if let Some(why) = boot_died(&x, n) {
+                    let name = dev
+                        .dir
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    if reboots[i] >= MAX_REBOOTS {
+                        bail!(
+                            "{name}'s boot died {} times, last: {why} (see <x86Sim>/var/boot-{name}.log)",
+                            reboots[i] + 1
+                        );
+                    }
+                    reboots[i] += 1;
+                    eprintln!(
+                        "agent-sim phones: {name}'s boot died ({why}); booting it again ({}/{MAX_REBOOTS})",
+                        reboots[i]
+                    );
+                    stop(n)?;
+                    self::start(n)?;
+                    continue;
+                }
+            }
             let Some((pid, secs)) = udid(&dev).and_then(|u| springboard(&u)) else {
                 continue;
             };

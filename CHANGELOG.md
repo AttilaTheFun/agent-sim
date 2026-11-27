@@ -30,6 +30,8 @@
   each test in two forms (patches/x86sim-arm64, which setup-arm64.sh applies).
 - `phones up` returns once the phone takes an app launch (Settings, launched and closed again) and has spent the first
   touch of the boot, which was dropped: ready 3-4 minutes after boot, with taps showing in about a second.
+- A phone whose boot dies (launchd_sim killed: a SIGSEGV at the start of a boot, now and then) is booted again, up to
+  twice, within seconds: `phones up` and `simctl bootstatus` waited 900 s on it before.
 - `setup-arm64.sh` pins every download by version and SHA-256 (rustup-init and Rust, 7-Zip, ipsw, bazelisk), and
   builds on Ubuntu 26.04 too.
 - `hooks/build.sh` builds the hooks on Linux too (Swift's clang, the MacOSX SDK from Xcode's .xip, LLVM's ld64.lld).

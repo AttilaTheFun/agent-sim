@@ -69,7 +69,9 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   server gone), the test runs once more on another booted phone; the stopped phone stays down until booted again.
   `agent-sim phones up N` boots phones 1 to N that do not run and returns once each can run tests: once it launches
   an app (Settings, launched and closed again), which FrontBoard allows two to three minutes after a boot, when it
-  takes touches too; `agent-sim phones status` lists them. For bundles whose failures
+  takes touches too; `agent-sim phones status` lists them. A boot that dies (simhost's "launchd_sim killed by
+  signal", now and then a SIGSEGV at the start of a boot, or the boot script gone) is booted again, up to twice.
+  For bundles whose failures
   are deliberate, `--expect FILE` (or `--test_env=AGENT_SIM_EXPECT=FILE`) passes a test when every test had the outcome
   FILE gives it (XCTestDemo's: `tests/apps/XCTestDemo/expected.txt`), so `bazel test //...` there passes.
 - **The image** of Nimbus' `ios` leases: `images/arm64/Containerfile` (about 4.4 GB) runs `setup-arm64.sh` with
