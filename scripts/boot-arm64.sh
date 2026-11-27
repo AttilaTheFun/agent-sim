@@ -36,7 +36,9 @@ SIMHOST=$X/host/simhost/simhost-arm64
 # std (MIN + UI, 107: homed, locationd, sharingd, passd, the Siri daemons, PosterBoard and the rest), and its
 # pictures are the same.
 if [ -z "${A64_JOBS:-}" ]; then
-	A64_JOBS=$(python3 -I - "$X/cli/libexec/arm64/boot-a64.sh" "${A64_JOB_LIST:-slim}" <<-'PY'
+	# (PosterBoard's job left out while its app is hidden, below: launchd restarts it for ever and SpringBoard waits on
+	# it at the Apple logo)
+	A64_JOBS=$(python3 -I - "$X/cli/libexec/arm64/boot-a64.sh" "${A64_JOB_LIST:-slim}" "${AGENT_SIM_HIDE_POSTERS:-1}" <<-'PY'
 	import re, sys
 	s = open(sys.argv[1]).read()
 	jobs = []
@@ -44,6 +46,8 @@ if [ -z "${A64_JOBS:-}" ]; then
 	    jobs += re.search(r'^%s="(.*?)"' % name, s, re.S | re.M).group(1).split()
 	if sys.argv[2] == "slim":
 	    jobs += ["com.apple.installcoordinationd", "com.apple.pasteboard.pasted"]
+	if sys.argv[3] == "1":
+	    jobs = [j for j in jobs if j != "com.apple.PosterBoard"]
 	print(" ".join(jobs))
 	PY
 	)
@@ -100,7 +104,8 @@ if [ -d "$RUNTIME_RO" ]; then
 			# SpringBoard's wallpaper posters and widget renderers hidden (whiteouts above the read-only runtime):
 			# SpringBoard starts them itself, whatever the job list, and they took ~0.2-0.3 GB a phone, timing out
 			# under software rendering, with no part in an app's tests. The fallback posters (Legacy, Loading,
-			# Null) stay. AGENT_SIM_HIDE_POSTERS=0 keeps them all; the next mount brings back what is not hidden.
+			# Null) stay. AGENT_SIM_HIDE_POSTERS=0 keeps them all from the overlay's next mount (it is mounted once per
+			# machine: a phone booted after another finds them as the first boot left them).
 			UPPER=$X/var/overlay/$RUNTIME_NAME/upper/$(readlink "$RUNTIME_RO/RuntimeRoot")
 			if [ "${AGENT_SIM_HIDE_POSTERS:-1}" = 1 ]; then
 				(cd "$RUNTIME_RO/RuntimeRoot" && for p in Applications/*Poster*.app Applications/AegirProxyApp.app \

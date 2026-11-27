@@ -25,7 +25,8 @@
 - SpringBoard's wallpaper posters and widget renderers are hidden (whiteouts in the runtime's overlay; the read-only
   runtime is untouched): SpringBoard starts them whatever the job list. An idle phone takes ~1.6 GB (37 processes),
   from ~2.0 GB. The home screen's wallpaper is black and its two widgets blank, as before. `AGENT_SIM_HIDE_POSTERS=0`
-  keeps them.
+  keeps them. With posters hidden, `A64_JOB_LIST=std` leaves out PosterBoard's job, which launchd otherwise restarted
+  for ever while SpringBoard waited on it at the Apple logo.
 - A test chosen with `--only-testing` (or `bazel test --test_filter`) runs once, not twice: x86Sim's run list named
   each test in two forms (patches/x86sim-arm64, which setup-arm64.sh applies).
 - `phones up` returns once the phone takes an app launch (Settings, launched and closed again) and has spent the first
