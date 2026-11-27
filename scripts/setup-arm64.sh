@@ -168,6 +168,8 @@ log "agent-sim's command (its test runner for \`bazel test\`: bazel/) and Bazel"
 ln -sf "$(cd "$HERE/.." && pwd)/target/release/agent-sim" /usr/local/bin/agent-sim
 # xcrun simctl for scripts written for a Mac (agent-sim simctl)
 ln -sf /usr/local/bin/agent-sim /usr/local/bin/xcrun
+# launchctl procinfo, whether iOS suspended a phone's process (Isomer's iOS launcher asks it to wake an app)
+ln -sf /usr/local/bin/agent-sim /usr/local/bin/launchctl
 # Bazel (bazelisk, which fetches the version a workspace's .bazelversion names), for `bazel test` of iOS test targets,
 # unless the machine has one (nimbus-base's build layer does, the same pin)
 command -v bazel > /dev/null || {

@@ -47,7 +47,8 @@ What works today, on iOS 27.2 (24B8117) in an arm64 Linux container (Ubuntu 24.0
 - **`xcrun simctl`** for scripts written for a Mac: the verbs CI scripts and Bazel launchers use (create, boot,
   install, launch, `io screenshot`, `status_bar`, `ui appearance`, ...). Visor's iOS screenshot proof, written for a
   Mac, runs on Linux through it (with fallbacks for `ditto` and `sips`), and most of its pictures are
-  pixel-identical to a Mac's.
+  pixel-identical to a Mac's. `launchctl procinfo <pid>` says whether iOS has suspended a phone's process, as a Mac's
+  does for its simulators.
 
 Its limits, today:
 

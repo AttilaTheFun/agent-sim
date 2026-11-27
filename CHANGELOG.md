@@ -32,6 +32,10 @@
   touch of the boot, which was dropped: ready 3-4 minutes after boot, with taps showing in about a second.
 - A phone whose boot dies (launchd_sim killed: a SIGSEGV at the start of a boot, now and then) is booted again, up to
   twice, within seconds: `phones up` and `simctl bootstatus` waited 900 s on it before.
+- `launchctl procinfo <pid>` (a `launchctl` link, as `xcrun`'s): whether iOS has suspended a phone's process
+  (`jetsam state = suspended`), which Isomer's iOS launcher asks to bring a suspended app back to the front. Under
+  Darling, RunningBoard now and then suspends the app in front about 30 s after its launch; the launcher couldn't see
+  that on Linux and waited on it until its commands timed out (Visor's proof).
 - `setup-arm64.sh` pins every download by version and SHA-256 (rustup-init and Rust, 7-Zip, ipsw, bazelisk), and
   builds on Ubuntu 26.04 too.
 - `hooks/build.sh` builds the hooks on Linux too (Swift's clang, the MacOSX SDK from Xcode's .xip, LLVM's ld64.lld).

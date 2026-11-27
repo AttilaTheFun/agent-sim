@@ -5,6 +5,7 @@ mod device;
 mod encode_bench;
 mod input;
 mod ipa;
+mod launchctl;
 mod mcp;
 mod phone;
 mod ring;
@@ -298,6 +299,16 @@ fn main() -> Result<()> {
             Ok(code) => std::process::exit(code),
             Err(e) => {
                 eprintln!("An error was encountered processing the command: {e:#}");
+                std::process::exit(1);
+            }
+        }
+    }
+    // a link named launchctl: a Mac's `launchctl procinfo <pid>`, whether iOS has suspended a phone's process
+    if argv.first().and_then(|a| a.rsplit('/').next()) == Some("launchctl") {
+        match launchctl::run(&argv[1..]) {
+            Ok(code) => std::process::exit(code),
+            Err(e) => {
+                eprintln!("launchctl: {e:#}");
                 std::process::exit(1);
             }
         }
