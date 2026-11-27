@@ -22,6 +22,12 @@
 - Phones boot x86Sim's slim job list by default (plus installcoordinationd and pasted): 35 of Apple's launchd jobs
   instead of 107, ~2.6 GB per phone running an app instead of ~3.2 GB, the same pictures and test results.
   `A64_JOB_LIST=std` boots the full list.
+- SpringBoard's wallpaper posters and widget renderers are hidden (whiteouts in the runtime's overlay; the read-only
+  runtime is untouched): SpringBoard starts them whatever the job list. An idle phone takes ~1.6 GB (37 processes),
+  from ~2.0 GB. The home screen's wallpaper is black and its two widgets blank, as before. `AGENT_SIM_HIDE_POSTERS=0`
+  keeps them.
+- `phones up` returns once the phone takes an app launch (Settings, launched and closed again) and has spent the first
+  touch of the boot, which was dropped: ready 3-4 minutes after boot, with taps showing in about a second.
 - `setup-arm64.sh` pins every download by version and SHA-256 (rustup-init and Rust, 7-Zip, ipsw, bazelisk), and
   builds on Ubuntu 26.04 too.
 - `hooks/build.sh` builds the hooks on Linux too (Swift's clang, the MacOSX SDK from Xcode's .xip, LLVM's ld64.lld).

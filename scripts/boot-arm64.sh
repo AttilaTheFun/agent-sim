@@ -97,6 +97,21 @@ if [ -d "$RUNTIME_RO" ]; then
 		flock 9
 		if ! mountpoint -q "$X/runtimes/$RUNTIME_NAME"; then
 			mkdir -p "$X/runtimes/$RUNTIME_NAME" "$X/var/overlay/$RUNTIME_NAME/upper" "$X/var/overlay/$RUNTIME_NAME/work"
+			# SpringBoard's wallpaper posters and widget renderers hidden (whiteouts above the read-only runtime):
+			# SpringBoard starts them itself, whatever the job list, and they took ~0.2-0.3 GB a phone, timing out
+			# under software rendering, with no part in an app's tests. The fallback posters (Legacy, Loading,
+			# Null) stay. AGENT_SIM_HIDE_POSTERS=0 keeps them all; the next mount brings back what is not hidden.
+			UPPER=$X/var/overlay/$RUNTIME_NAME/upper/$(readlink "$RUNTIME_RO/RuntimeRoot")
+			if [ "${AGENT_SIM_HIDE_POSTERS:-1}" = 1 ]; then
+				(cd "$RUNTIME_RO/RuntimeRoot" && for p in Applications/*Poster*.app Applications/AegirProxyApp.app \
+					System/Library/CoreServices/AegirProxyApp.app Applications/WidgetRenderer_*.app \
+					System/Library/ExtensionKit/Extensions/{AmbientPhotoFramePosterProvider,AvatarPosterExtension,ClockPosterExtension,CollectionsPoster,DynamicBackgroundPosterExtension,GradientBackgroundPosterExtension,MercuryPosterExtension,PhotosPosterProvider}.appex; do
+					[ -e "$p" ] || continue
+					mkdir -p "$UPPER/$(dirname "$p")" && rm -rf "${UPPER:?}/$p" && mknod "$UPPER/$p" c 0 0
+				done)
+			else
+				find "$UPPER" -type c -delete 2>/dev/null || true
+			fi
 			mount -t overlay overlay -o "lowerdir=$(readlink -f "$RUNTIME_RO"),upperdir=$X/var/overlay/$RUNTIME_NAME/upper,workdir=$X/var/overlay/$RUNTIME_NAME/work" \
 				"$X/runtimes/$RUNTIME_NAME"
 		fi

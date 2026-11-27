@@ -109,9 +109,14 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   SpringBoard's Info.plist (productivity-gesture, system-notes-presentation, BacklightServices.diagnostics,
   configuration, banner-context, mitigation-session, capture-button-restriction, background-pip,
   accessibility-window-hosting) hold the milestone until the extended deadline (+140 s). Taking them out of the
-  Info.plist does not help: SpringBoard then fails when it registers some of them itself, later. The ways out are
-  listeners for the missing services (from agent-sim's hooks) or a shorter deadline. `X86SIM_OSLOG=SpringBoard,backboardd
-  X86SIM_OSLOG_DIR=/Volumes/SystemRoot/<dir>` on the boot shows it.
+  Info.plist does not help: SpringBoard then fails when it registers some of them itself, later. Tried in a lease,
+  none of which moved the ready time (182-231 s without, 185-206 s with): a listener for `BKHIDUISensorService` in
+  backboardd, registered as BoardServices loads, that closes each connection (SpringBoard's sensor call then returns
+  at once; registered two seconds later instead, backboardd stops on an assertion); making
+  `+[BSServiceConnectionListener extendBootstrap]` do nothing in SpringBoard (it is never called: the extension is
+  BoardServices' own); hiding SpringBoard's wallpaper posters and widget renderers. Still to try: listeners for the
+  nine `com.apple.frontboard` services, or a shorter deadline in BoardServices itself.
+  `X86SIM_OSLOG=SpringBoard,backboardd X86SIM_OSLOG_DIR=/Volumes/SystemRoot/<dir>` on the boot shows it.
 - **A test chosen with `--only-testing` (or `bazel test --test_filter`) runs twice** in a UI test bundle: x86Sim's
   `xctest.py` puts each chosen method in the run list in both its Objective-C and its Swift form
   (`test_identifiers`), and XCTest runs both. Keeping only the Swift form in the run list fixed it in a lease;

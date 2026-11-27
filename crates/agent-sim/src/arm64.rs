@@ -158,7 +158,19 @@ fn takes_launches(dev: &Device) -> bool {
     if launch(dev, PROBE_APP).is_err() {
         return false;
     }
-    let _ = terminate(dev, PROBE_APP);
+    // closed once it runs: a terminate right after the launch came before the app was there to close, and Settings
+    // stayed in the background (180 MB)
+    let settings = || {
+        crate::phone::process_ids(dev, |_, exe| exe == "Preferences").is_ok_and(|p| !p.is_empty())
+    };
+    let start = Instant::now();
+    while !settings() && start.elapsed() < Duration::from_secs(15) {
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    while settings() && start.elapsed() < Duration::from_secs(45) {
+        let _ = terminate(dev, PROBE_APP);
+        std::thread::sleep(Duration::from_secs(1));
+    }
     let _ = crate::cmd::press(dev, "home");
     // the home screen back before anything else is asked of the phone
     std::thread::sleep(Duration::from_secs(3));
