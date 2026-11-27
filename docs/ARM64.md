@@ -123,7 +123,12 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   waiting (LaunchServices enumerations, notification lists, icons, under Darling's slower system calls); and ~20 s
   more pass before the home screen's scene exists, after which FrontBoard's milestone comes. BoardServices has no
   setting for its deadline (its strings name `Bootstrap`, `ManualBootstrap` and `UnboundedManualBootstrap` domain
-  options and extension counts): shortening it means changing BoardServices' code, the next thing to try.
+  options and extension counts): shortening it means changing BoardServices' code, the next thing to try. Two more
+  ruled out: making `+[BSServicesConfiguration extendAutomaticBootstrapCompletion]` (which SpringBoard calls as it
+  starts) return nothing leaves the ready time as it was (183 s against 185 s), so the milestone follows SpringBoard's
+  own startup rather than the extension; and backboardd registers `BKProximitySensor` itself (a stand-in for it stops
+  backboardd: "already have a global listener"), so its 50 s wait is not for that service. Both its domains,
+  `BKSHIDServices` and `BKSSystemShell`, complete together at the deadline.
   `X86SIM_OSLOG=SpringBoard,backboardd X86SIM_OSLOG_DIR=/Volumes/SystemRoot/<dir>` on the boot shows it.
 - **Not yet compared with Apple's simulator.** The home screen's widgets are blank white squares in a first boot,
   and the lock screen, speed and software rendering (`X86SIM_METAL=0`) are not checked yet.
