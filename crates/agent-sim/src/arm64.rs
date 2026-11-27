@@ -7,9 +7,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// How long a phone's SpringBoard must have run before the phone counts as ready: a first boot finishes starting
-/// about two minutes after SpringBoard starts, and a SpringBoard that keeps restarting never gets there.
-const READY_SECS: u64 = 120;
+/// How long a phone's SpringBoard must have run before `wait_ready` starts asking it to launch an app: it is not
+/// worth asking sooner, and a SpringBoard that keeps restarting never gets there.
+const PROBE_AFTER_SECS: u64 = 60;
+
+/// The app `wait_ready` launches to see whether the phone takes launches and touches yet.
+const PROBE_APP: &str = "com.apple.Preferences";
 
 /// The account's home directory, where the phones' Darling prefixes are: the password database's, not `$HOME`, which
 /// `bazel test` points at a directory of its own.
@@ -104,7 +107,8 @@ pub fn udid(dev: &Device) -> Option<String> {
 }
 
 /// How long this phone's SpringBoard has been running, in seconds, or None if it is not.
-fn springboard_secs(udid: &str) -> Option<u64> {
+/// The phone's SpringBoard: its Linux pid and how long it has run, in seconds.
+fn springboard(udid: &str) -> Option<(u32, u64)> {
     let mark = format!("SIMULATOR_UDID={udid}");
     let uptime: f64 = std::fs::read_to_string("/proc/uptime")
         .ok()?
@@ -113,6 +117,9 @@ fn springboard_secs(udid: &str) -> Option<u64> {
         .parse()
         .ok()?;
     for e in std::fs::read_dir("/proc").ok()?.flatten() {
+        let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
         let Ok(cmd) = std::fs::read(e.path().join("cmdline")) else {
             continue;
         };
@@ -129,9 +136,42 @@ fn springboard_secs(udid: &str) -> Option<u64> {
         let stat = std::fs::read_to_string(e.path().join("stat")).ok()?;
         let after_name = &stat[stat.rfind(')')? + 2..];
         let start: f64 = after_name.split_whitespace().nth(19)?.parse().ok()?;
-        return Some((uptime - start / 100.0).max(0.0) as u64);
+        return Some((pid, (uptime - start / 100.0).max(0.0) as u64));
     }
     None
+}
+
+/// The file in which `wait_ready` notes the SpringBoard it found ready (its pid): a phone is ready while that
+/// SpringBoard runs.
+fn ready_file(dev: &Device) -> PathBuf {
+    dev.dir.join("agent-sim-ready")
+}
+
+fn is_ready(dev: &Device, springboard_pid: u32) -> bool {
+    std::fs::read_to_string(ready_file(dev)).is_ok_and(|s| s.trim() == springboard_pid.to_string())
+}
+
+/// Whether the phone takes an app launch: FrontBoard holds launches (and touches) until its system app has started,
+/// two to three minutes after a boot under Darling (docs/ARM64.md), well after SpringBoard itself runs. Settings is
+/// launched, closed again and the home screen brought back.
+fn takes_launches(dev: &Device) -> bool {
+    if launch(dev, PROBE_APP).is_err() {
+        return false;
+    }
+    let _ = terminate(dev, PROBE_APP);
+    let _ = crate::cmd::press(dev, "home");
+    // the home screen back before anything else is asked of the phone
+    std::thread::sleep(Duration::from_secs(3));
+    warm_touch(dev);
+    true
+}
+
+/// Touches the phone once, on an empty part of the home screen, before anything else taps it: the first touch of a
+/// boot was dropped (a tap on Settings' icon right after `phones up` did nothing for 20 s; the next one opened it in
+/// half a second), as the keyboard's first key loses its case (`warm_keyboard`).
+fn warm_touch(dev: &Device) {
+    let _ = crate::cmd::tap(dev, &["201".to_string(), "650".to_string()], 80);
+    std::thread::sleep(Duration::from_secs(1));
 }
 
 /// The phone's device directory: `device-a64` for the first, `device-a64-<n>` for the others.
@@ -207,7 +247,7 @@ pub fn start(n: usize) -> Result<()> {
     Ok(())
 }
 
-/// Waits until phones `ns` can run tests (launchd_sim up, SpringBoard running for READY_SECS), attaching each one's
+/// Waits until phones `ns` can run tests (launchd_sim up, and SpringBoard launching apps: `takes_launches`), attaching each one's
 /// keyboard once it is.
 pub fn wait_ready(ns: &[usize], timeout: Duration) -> Result<()> {
     let x = x86sim_root()?;
@@ -223,9 +263,12 @@ pub fn wait_ready(ns: &[usize], timeout: Duration) -> Result<()> {
                 dir: device_dir(&x, n),
             };
             let up = running.iter().any(|p| p.dir == dev.dir);
-            let secs = udid(&dev).and_then(|u| springboard_secs(&u)).unwrap_or(0);
-            if up && secs >= READY_SECS {
+            let Some((pid, secs)) = udid(&dev).and_then(|u| springboard(&u)) else {
+                continue;
+            };
+            if up && (is_ready(&dev, pid) || (secs >= PROBE_AFTER_SECS && takes_launches(&dev))) {
                 ready[i] = true;
+                let _ = std::fs::write(ready_file(&dev), pid.to_string());
                 warm_keyboard(&dev);
                 eprintln!(
                     "agent-sim phones: {} ready after {} s",
@@ -353,9 +396,11 @@ pub fn status() -> Result<String> {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            match udid(p).and_then(|u| springboard_secs(&u)) {
-                Some(s) if s >= READY_SECS => format!("{name}: ready (SpringBoard up {s} s)"),
-                Some(s) => format!("{name}: starting (SpringBoard up {s} s)"),
+            match udid(p).and_then(|u| springboard(&u)) {
+                Some((pid, s)) if is_ready(p, pid) => {
+                    format!("{name}: ready (SpringBoard up {s} s)")
+                }
+                Some((_, s)) => format!("{name}: starting (SpringBoard up {s} s)"),
                 None => format!("{name}: starting (no SpringBoard yet)"),
             }
         })

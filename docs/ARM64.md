@@ -67,8 +67,9 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   on two phones, about 200 s on one). Each phone after XCTestDemo's UI tests takes about 3.7 GB (2.8 GB of its own and
   0.9 GB of shared memory), so a 16 GB container holds three or four. If a phone stops during a test (its Darling
   server gone), the test runs once more on another booted phone; the stopped phone stays down until booted again.
-  `agent-sim phones up N` boots phones 1 to N that do not run and returns once each can run tests (its SpringBoard
-  up for two minutes: about two minutes after boot); `agent-sim phones status` lists them. For bundles whose failures
+  `agent-sim phones up N` boots phones 1 to N that do not run and returns once each can run tests: once it launches
+  an app (Settings, launched and closed again), which FrontBoard allows two to three minutes after a boot, when it
+  takes touches too; `agent-sim phones status` lists them. For bundles whose failures
   are deliberate, `--expect FILE` (or `--test_env=AGENT_SIM_EXPECT=FILE`) passes a test when every test had the outcome
   FILE gives it (XCTestDemo's: `tests/apps/XCTestDemo/expected.txt`), so `bazel test //...` there passes.
 - **The image** of Nimbus' `ios` leases: `images/arm64/Containerfile` (about 4.4 GB) runs `setup-arm64.sh` with
