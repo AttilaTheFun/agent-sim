@@ -248,6 +248,13 @@ fn launch(args: &[String]) -> Result<i32> {
     };
     let dev = find(udid)?;
     if bundle == "com.apple.springboard" {
+        // as Apple's simctl, through FrontBoard: the app in front goes to the background, and on the home screen
+        // nothing happens. A home press there was taken for a gesture of the home screen's, and an app launched right
+        // after it was never put in front: iOS suspended it about 10 s later (Visor's proof). The press only if
+        // FrontBoard won't.
+        if simctl_py(&dev, &["launch".to_string(), bundle.clone()])? == 0 {
+            return Ok(0);
+        }
         crate::cmd::press(&dev, "home")?;
         println!("{bundle}: 1");
         return Ok(0);
