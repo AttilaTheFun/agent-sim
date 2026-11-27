@@ -114,8 +114,16 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   backboardd, registered as BoardServices loads, that closes each connection (SpringBoard's sensor call then returns
   at once; registered two seconds later instead, backboardd stops on an assertion); making
   `+[BSServiceConnectionListener extendBootstrap]` do nothing in SpringBoard (it is never called: the extension is
-  BoardServices' own); hiding SpringBoard's wallpaper posters and widget renderers. Still to try: listeners for the
-  nine `com.apple.frontboard` services, or a shorter deadline in BoardServices itself.
+  BoardServices' own); hiding SpringBoard's wallpaper posters and widget renderers; stand-in listeners for eight of
+  the nine `com.apple.frontboard` services (all but system-notes-presentation, which SpringBoard registers itself),
+  which no one ever connected to. With the stand-ins and the posters hidden, SpringBoard's startup still holds
+  (ready after 165-188 s): its synchronous `setSecureRenderingEnabled:forDisplayUUID:` to backboardd waits ~22 s,
+  because backboardd's `BKSHIDServices` domain hands out connections only when its automatic bootstrapping completes,
+  50 s after backboardd starts, whatever listens; the startup-to-home transition takes ~39 s, busy rather than
+  waiting (LaunchServices enumerations, notification lists, icons, under Darling's slower system calls); and ~20 s
+  more pass before the home screen's scene exists, after which FrontBoard's milestone comes. BoardServices has no
+  setting for its deadline (its strings name `Bootstrap`, `ManualBootstrap` and `UnboundedManualBootstrap` domain
+  options and extension counts): shortening it means changing BoardServices' code, the next thing to try.
   `X86SIM_OSLOG=SpringBoard,backboardd X86SIM_OSLOG_DIR=/Volumes/SystemRoot/<dir>` on the boot shows it.
 - **Not yet compared with Apple's simulator.** The home screen's widgets are blank white squares in a first boot,
   and the lock screen, speed and software rendering (`X86SIM_METAL=0`) are not checked yet.
