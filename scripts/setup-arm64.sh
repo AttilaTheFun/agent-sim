@@ -99,9 +99,12 @@ else
 		echo "$patched" > "$D/.agent-sim-patched"
 	fi
 	if [ ! -x /usr/local/bin/darling ] || [ "$D/.agent-sim-patched" -nt /usr/local/bin/darling ]; then
-		# twice: Ruby's bundles link against CFNetwork, which the build does not wait for (the second run finishes them)
+		# twice: Ruby's bundles link against CFNetwork, which the build does not wait for (the second run finishes them).
+		# With no swiftc on PATH: Darling's CMake builds its Swift CryptoKit when it finds one, which Swift 6.4 fails
+		# to compile (nimbus-base's toolchain layer puts Swift on PATH)
 		mkdir -p "$D/build"
-		(cd "$D/build" && cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+		NO_SWIFT_PATH=$(printf '%s\n' "$PATH" | tr ':' '\n' | while read -r d; do [ -x "$d/swiftc" ] || printf '%s:' "$d"; done)
+		(export PATH="${NO_SWIFT_PATH%:}" && cd "$D/build" && cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
 			-DTARGET_ARM64=ON > /dev/null &&
 			{ ninja -j "$JOBS" -k 0 || ninja -j "$JOBS"; } && ninja install > /dev/null)
 	fi
