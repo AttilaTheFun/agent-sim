@@ -128,7 +128,12 @@ the iOS 27.2 runtime (24B8117), with `scripts/setup-arm64.sh` and `scripts/boot-
   starts) return nothing leaves the ready time as it was (183 s against 185 s), so the milestone follows SpringBoard's
   own startup rather than the extension; and backboardd registers `BKProximitySensor` itself (a stand-in for it stops
   backboardd: "already have a global listener"), so its 50 s wait is not for that service. Both its domains,
-  `BKSHIDServices` and `BKSSystemShell`, complete together at the deadline.
+  `BKSHIDServices` and `BKSSystemShell`, complete together at the deadline. That deadline's handler calls
+  `-[BSServiceDomain _enforceListenerRegistrationForReason:]` (an `objc_direct` method, so callable only by its
+  address) on each domain; calling it from backboardd 12 s after start ran without crashes but did not shorten the
+  boot (200 s, against 190 s without in the same lease), and one boot of two never became ready (its app launches
+  never went through). So SpringBoard's own startup under Darling is what remains; the way on is making Darling's
+  system calls cheaper, not BoardServices' waits.
   `X86SIM_OSLOG=SpringBoard,backboardd X86SIM_OSLOG_DIR=/Volumes/SystemRoot/<dir>` on the boot shows it.
 - **Not yet compared with Apple's simulator.** The home screen's widgets are blank white squares in a first boot,
   and the lock screen, speed and software rendering (`X86SIM_METAL=0`) are not checked yet.
