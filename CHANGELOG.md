@@ -40,6 +40,8 @@
 - `simctl launch com.apple.springboard` goes through FrontBoard, as Apple's does, instead of pressing home. On the home
   screen the press was taken for a gesture, and an app launched right after it (as Isomer's launcher does) was never
   put in front, so iOS suspended it about 10 s later: the cause of the suspensions above.
+- `simctl runtime list [-j]`: the runtime, Ready once Apple's files are there, for scripts that wait on it (Isomer's
+  CI waited 120 s without it).
 - `setup-arm64.sh` pins every download by version and SHA-256 (rustup-init and Rust, 7-Zip, ipsw, bazelisk), and
   builds on Ubuntu 26.04 too.
 - `hooks/build.sh` builds the hooks on Linux too (Swift's clang, the MacOSX SDK from Xcode's .xip, LLVM's ld64.lld).

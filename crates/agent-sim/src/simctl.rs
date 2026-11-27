@@ -176,6 +176,33 @@ fn list(args: &[String]) -> Result<i32> {
     Ok(0)
 }
 
+/// `runtime list [-j]`: the one runtime, as Xcode's simctl lists the runtimes it has mounted: Ready once its files are
+/// there (scripts wait for every runtime to be Ready before they create a phone). Keyed by the runtime's identifier: a
+/// Mac's are keyed by each disk image's UUID, which this runtime has none of.
+fn runtime(args: &[String]) -> Result<i32> {
+    if args.first().map(String::as_str) != Some("list") {
+        bail!("simctl runtime: only list here");
+    }
+    let state = if runtime_available()? {
+        "Ready"
+    } else {
+        "Unusable"
+    };
+    if args.iter().any(|a| a == "-j" || a == "--json") {
+        let rt = serde_json::json!({
+            "identifier": RUNTIME_ID, "runtimeIdentifier": RUNTIME_ID, "version": "27.2", "build": "24B8117",
+            "platformIdentifier": "com.apple.platform.iphonesimulator", "state": state, "deletable": false,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({ RUNTIME_ID: rt }))?
+        );
+    } else {
+        println!("== Disk Images ==\n-- iOS --\niOS 27.2 (24B8117) - {RUNTIME_ID} ({state})");
+    }
+    Ok(0)
+}
+
 /// `create <name> <device type> [runtime]`: the next free phone, started; its UDID once its device exists.
 fn create(args: &[String]) -> Result<i32> {
     let name = args.first().ok_or_else(usage)?;
@@ -462,6 +489,7 @@ pub fn run(args: &[String]) -> Result<i32> {
     let arg = |i: usize| rest.get(i).map(String::as_str).ok_or_else(usage);
     match verb.as_str() {
         "list" => list(rest),
+        "runtime" => runtime(rest),
         "create" => create(rest),
         "boot" => {
             let dev = find(arg(0)?)?;
