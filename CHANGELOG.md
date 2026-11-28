@@ -45,6 +45,9 @@
   keeps Swift Testing's later lines out of a failure's message, and fails a run in which no test ran (exit status 2,
   as `agent-sim xctest` documents; an `--only-testing` that matched nothing passed before). `--only-testing` doesn't
   pick Swift Testing tests yet.
+- A test bundle's Swift Testing tests all run: XCTest runs them after its own suite, and the runner stopped the app 20 s
+  after that suite, cutting a longer run short without a word (isomer's hosted bundle: 7 to 10 of its 20 tests).
+  patches/x86sim-arm64/0003 waits for Swift Testing's run to end, and a test it started but never ended fails.
 - `simctl runtime list [-j]`: the runtime, Ready once Apple's files are there, for scripts that wait on it (Isomer's
   CI waited 120 s without it).
 - `setup-arm64.sh` pins every download by version and SHA-256 (rustup-init and Rust, 7-Zip, ipsw, bazelisk), and

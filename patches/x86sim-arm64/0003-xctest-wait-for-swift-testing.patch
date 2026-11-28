@@ -1,0 +1,77 @@
+xctest.py: a run waits for Swift Testing's tests, which XCTest runs after its own suite
+
+XCTest's interop runs a bundle's Swift Testing tests after XCTest's own top suite ("All tests") has ended, and the runner
+stopped the test process 20 s after that suite ended: a bundle whose Swift Testing tests take longer was cut short, and
+its later tests were left out of the results without a word (isomer's hosted bundle: 7, 9 or 10 of its 20 tests, all
+reported passing). The runner now also waits for Swift Testing's run, from its "Test run started" to its closing "Test
+run with N tests", bounded by the target's timeout. A Swift Testing test that started but never ended (the process gone
+or the time up) is a failed test, not a missing one.
+
+diff --git a/cli/libexec/xctest.py b/cli/libexec/xctest.py
+index 3460bd3..dcfcbcc 100755
+--- a/cli/libexec/xctest.py
++++ b/cli/libexec/xctest.py
+@@ -454,6 +454,10 @@ R_EXEC = re.compile(r"^\s+Executed (\d+) tests?")
+ R_ST_END = re.compile(r"^\S+ Test (.+?)(?: with \d+ test cases?)? (passed|failed|skipped)(?: after (\d+(?:\.\d+)?) seconds)?")
+ # Swift Testing's other lines (a test or test case started, a suite started or ended), which end a failure's message
+ R_ST_OTHER = re.compile(r"^(\u25c7 |\S+ Suite |\S+ Test case )")
++# Swift Testing's run starting, and a test starting (not a test case of a parameterized one): a run under way isn't over
++# when XCTest's own suite ends (XCTest runs Swift Testing's tests after it), and a test started but never ended failed
++R_ST_RUN = re.compile(r"^\S+ Test run started\.")
++R_ST_START = re.compile(r"^\S+ Test (?!run |case )(.+?) started\.$")
+ R_ST_ISSUE = re.compile(r"^\S+ Test (.+?) recorded an issue at (.+?):(\d+)(?::\d+)?: (.*)$")
+ R_LOGLINE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d|arm64host:|simshim:|objc\[|\s+t = )")
+ 
+@@ -467,6 +471,12 @@ class Parser:
+         self.top = None
+         self.done = False
+         self.last_fail = None
++        self.st_running = False
++
++    @property
++    def finished(self):
++        """XCTest's top suite ended, and Swift Testing's run, if one started, too."""
++        return self.done and not self.st_running
+ 
+     def test(self, cls, name):
+         k = (cls, name)
+@@ -522,8 +532,18 @@ class Parser:
+             t["failures"].append(f)
+             self.last_fail = f
+             return True
++        if R_ST_RUN.match(l):
++            self.st_running = True
++            self.last_fail = None
++            return True
++        m = R_ST_START.match(l)
++        if m:
++            self.test("SwiftTesting", m.group(1))
++            self.last_fail = None
++            return True
+         m = R_ST_END.match(l)
+         if m and m.group(1).startswith("run with "):   # Swift Testing's closing line ("Test run with N tests ...")
++            self.st_running = False
+             return True
+         if m and not l.startswith("Test "):
+             t = self.test("SwiftTesting", m.group(1))
+@@ -684,8 +704,10 @@ class Runner:
+                     own = parser.line(s)
+                     if not quiet and (verbose or own):
+                         print(s, flush=True)
+-                if parser.done and done_at is None:
++                if parser.finished and done_at is None:
+                     done_at = time.monotonic()
++                elif not parser.finished:
++                    done_at = None   # Swift Testing's run began after XCTest's suite ended: wait for it
+             now = time.monotonic()
+             if now - last_alive > 2:
+                 last_alive = now
+@@ -693,7 +715,7 @@ class Runner:
+                     gone_since = gone_since or now
+                     if now - gone_since > 1.5:   # its last writes are in the file
+                         if not b:
+-                            return "done" if parser.done else "exited"
++                            return "done" if parser.finished else "exited"
+                 else:
+                     gone_since = None
+             if done_at and now - done_at > 20:
