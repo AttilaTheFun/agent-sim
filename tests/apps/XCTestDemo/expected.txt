@@ -6,3 +6,4 @@ XCTestDemoTests/CalcTests/testDeliberateFailure failed
 XCTestDemoTests/CalcTests/testSkipped skipped
 XCTestDemoTests/HostTests/testDeliberateThrow failed
 XCTestDemoUITests/XCTestDemoUITests/testDeliberateUIFailure failed
+XCTestDemoSwiftTesting/SwiftTesting/deliberateFailure() failed

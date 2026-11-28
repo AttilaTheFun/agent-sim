@@ -79,3 +79,22 @@ ios_ui_test(
     test_host = ":XCTestDemo",
     deps = [":XCTestDemoUITestsLib"],
 )
+
+# Swift Testing tests (@Test) hosted in XCTestDemo.app: agent-sim's own (SwiftTestingTests.swift), as Isomer's and
+# Visor's hosted bundles are written.
+swift_library(
+    name = "XCTestDemoSwiftTestingLib",
+    testonly = True,
+    srcs = ["SwiftTestingTests.swift"],
+    module_name = "XCTestDemoSwiftTesting",
+    tags = ["manual"],
+)
+
+ios_unit_test(
+    name = "XCTestDemoSwiftTesting",
+    runner = "@agent_sim_rules//:ios_runner",
+    bundle_id = "com.x86sim.test.XCTestDemoSwiftTesting",
+    minimum_os_version = MINIMUM_OS,
+    test_host = ":XCTestDemo",
+    deps = [":XCTestDemoSwiftTestingLib"],
+)

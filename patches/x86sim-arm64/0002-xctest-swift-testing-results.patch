@@ -1,0 +1,53 @@
+xctest.py: Swift Testing's results as their tests, and a run of no tests a failure
+
+A parameterized test's line ("Test f(n:) with 3 test cases passed") made a test named "f(n:) with 3 test cases", and
+a failure's message took in every Swift Testing line after it (tests and test cases starting, the suite ending), which
+went into the JUnit. The test is now f(n:), and Swift Testing's other lines end a failure's message (its "↳" lines,
+the expectation's values, stay in it). A run in which no test ran (an -only-testing that matched nothing) said
+"TEST SUCCEEDED" and exited 0; it now fails, with exit status 2.
+
+diff --git a/cli/libexec/xctest.py b/cli/libexec/xctest.py
+index 079a457..bb302d7 100755
+--- a/cli/libexec/xctest.py
++++ b/cli/libexec/xctest.py
+@@ -450,7 +450,10 @@ R_SUITE = re.compile(r"^Test Suite '(.+)' (started|passed|failed) at ")
+ R_EXEC = re.compile(r"^\s+Executed (\d+) tests?")
+ # Swift Testing (run by XCTest's interop): "✔ Test add() passed after 0.001 seconds.", "✘ Test x() recorded an issue at
+ # File.swift:12:5: Expectation failed: ...", "➜ Test y() skipped: ..."
+-R_ST_END = re.compile(r"^\S+ Test (.+?) (passed|failed|skipped)(?: after (\d+(?:\.\d+)?) seconds)?")
++# (a parameterized test's line says "Test f(n:) with 3 test cases passed": the test is f(n:))
++R_ST_END = re.compile(r"^\S+ Test (.+?)(?: with \d+ test cases?)? (passed|failed|skipped)(?: after (\d+(?:\.\d+)?) seconds)?")
++# Swift Testing's other lines (a test or test case started, a suite started or ended), which end a failure's message
++R_ST_OTHER = re.compile(r"^(\u25c7 |\S+ Suite |\S+ Test case )")
+ R_ST_ISSUE = re.compile(r"^\S+ Test (.+?) recorded an issue at (.+?):(\d+)(?::\d+)?: (.*)$")
+ R_LOGLINE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d|arm64host:|simshim:|objc\[|\s+t = )")
+
+@@ -530,6 +533,9 @@ class Parser:
+             return True
+         if l.lstrip().startswith("t = "):
+             return True
++        if R_ST_OTHER.match(l):
++            self.last_fail = None
++            return True
+         # a failure message that goes on over more lines (XCTAssert descriptions, thrown errors' descriptions)
+         if self.last_fail is not None and l.strip() and not R_LOGLINE.match(l) and len(self.last_fail["message"]) < 4000:
+             self.last_fail["message"] += "\n" + l
+@@ -874,7 +880,8 @@ def report(s, quiet):
+                 p("\t\t%s%s" % (where, f["message"].split("\n")[0]))
+         for r in errs:
+             p("\t%s: %s" % (r["name"], r["error"]))
+-    p("\n** TEST %s **" % ("SUCCEEDED" if s["result"] == "passed" else "FAILED"))
++    # a run in which no test ran is no success: a filter that matched nothing, or a bundle with none
++    p("\n** TEST %s **" % ("SUCCEEDED" if s["result"] == "passed" and c["total"] else "FAILED"))
+
+
+ # ---------------------------------------------------------------------------------------------------------------------
+@@ -991,7 +998,7 @@ def main(argv):
+         with open(a["json"], "w") as f:
+             json.dump(s, f, indent=1)
+     report(s, a["quiet"])
+-    if not s["targets"]:
++    if not s["targets"] or not s["counts"]["total"]:
+         return 2
+     return 0 if s["result"] == "passed" else 1
+

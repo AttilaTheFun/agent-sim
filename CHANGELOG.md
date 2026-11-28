@@ -40,6 +40,11 @@
 - `simctl launch com.apple.springboard` goes through FrontBoard, as Apple's does, instead of pressing home. On the home
   screen the press was taken for a gesture, and an app launched right after it (as Isomer's launcher does) was never
   put in front, so iOS suspended it about 10 s later: the cause of the suspensions above.
+- Swift Testing (`@Test`) in hosted bundles runs on the phones, as XCTest does: XCTestDemo has such a bundle
+  (XCTestDemoSwiftTesting). patches/x86sim-arm64/0002 names a parameterized test as itself in the results and JUnit,
+  keeps Swift Testing's later lines out of a failure's message, and fails a run in which no test ran (exit status 2,
+  as `agent-sim xctest` documents; an `--only-testing` that matched nothing passed before). `--only-testing` doesn't
+  pick Swift Testing tests yet.
 - `simctl runtime list [-j]`: the runtime, Ready once Apple's files are there, for scripts that wait on it (Isomer's
   CI waited 120 s without it).
 - `setup-arm64.sh` pins every download by version and SHA-256 (rustup-init and Rust, 7-Zip, ipsw, bazelisk), and
