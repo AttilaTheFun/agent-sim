@@ -8,6 +8,7 @@ on:
     branches: [arm64]
     paths:
       - patches/darling-arm64/**
+      - patches/x86sim-arm64/**
       - scripts/setup-arm64.sh
       - scripts/build-simhost-arm64.sh
       - scripts/boot-arm64.sh
